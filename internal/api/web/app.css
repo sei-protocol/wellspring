@@ -30,6 +30,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   min-height: 100vh;
@@ -127,7 +128,6 @@ button {
 .primary[data-busy="true"] .spinner { display: block; }
 :focus-visible { outline: 2px solid var(--sei); outline-offset: 2px; }
 .progress { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); margin: 1.5rem 0 0; padding: 0; counter-reset: step; }
-.progress[hidden] { display: none; }
 .progress li { position: relative; padding-top: 1rem; color: var(--muted); }
 .progress li::before { content: ""; position: absolute; top: 0; left: 0; right: 4px; height: 3px; background: var(--line); }
 .progress li[data-state="active"] { color: var(--text); }

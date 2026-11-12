@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const STEPS = ["queued", "sent", "confirmed"];
 let info, widget, token = "", polling = 0;
-const sei = (wei) => (Number(BigInt(wei) / 10n ** 14n) / 1e4).toLocaleString("en-US");
+const sei = (wei) => (Number(BigInt(wei) / 10n ** 14n) / 1e4).toLocaleString("en-US", { maximumFractionDigits: 4 });
 
 function show(text, kind = "info", hash = "") {
   const el = $("status");
@@ -20,8 +20,12 @@ function show(text, kind = "info", hash = "") {
   copy.className = "inline";
   copy.textContent = "Copy";
   copy.onclick = async () => {
-    await navigator.clipboard?.writeText(hash);
-    copy.textContent = "Copied";
+    try {
+      await navigator.clipboard.writeText(hash);
+      copy.textContent = "Copied";
+    } catch {
+      copy.textContent = "Copy failed";
+    }
   };
   row.append(h, copy);
   el.appendChild(row);
