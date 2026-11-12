@@ -29,6 +29,7 @@ async function load() {
 
 window.onCaptcha = (t) => { token = t; };
 window.onCaptchaExpired = () => { token = ""; };
+$("address").oninvalid = () => show("");
 
 // Captcha tokens are single-use, so every submit needs a fresh one.
 function resetCaptcha() {
@@ -48,10 +49,11 @@ $("form").onsubmit = async (e) => {
       body: JSON.stringify({ address: $("address").value.trim(), captchaToken: token }),
     });
     const body = await r.json();
+    if (id !== polling) return;
     if (!r.ok) { show(body.message || body.error); return; }
     poll(id, body.id);
   } catch {
-    show("Faucet unreachable, try again shortly");
+    if (id === polling) show("Faucet unreachable, try again shortly");
   } finally {
     resetCaptcha();
   }
