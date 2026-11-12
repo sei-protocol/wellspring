@@ -80,8 +80,9 @@ liveness; `/readyz` also checks the RPC and the faucet balance.
 
 ## Kubernetes
 
-The Helm chart in `chart/` runs it the only safe way: one replica with the
-`Recreate` strategy, since one signer owns the nonce, a PVC at `/data`, and a
+The Helm chart in `chart/` runs it the only safe way: a single-replica
+StatefulSet, which never starts a second pod while the first is still shutting
+down, since one signer owns the nonce, a PVC at `/data`, and a
 fixed security context (UID/GID 65532, read-only root filesystem, no
 capabilities, no service account token). Merges to main publish a snapshot
 image and chart; a `vX.Y.Z` tag publishes a release, with the chart pinned to
@@ -98,7 +99,7 @@ helm install wellspring oci://ghcr.io/sei-protocol/charts/wellspring --version <
   --set config.captcha-site-key=<site key> --set captcha.existingSecret=wellspring-captcha
 ```
 
-`config` takes any flag by name, such as `config.amount-wei`. Set
+`config` takes any flag by name as a string, such as `config.amount-wei`. Set
 `config.trust-proxy-hops` to the number of proxies in front, or every claim
 counts against the proxy's IP. See `chart/values.yaml` for the HTTPRoute,
 ServiceMonitor and NetworkPolicy settings.

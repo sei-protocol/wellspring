@@ -2,7 +2,8 @@ name: Release
 
 # A vX.Y.Z tag on a commit on main publishes image X.Y.Z and chart X.Y.Z. Every merge to main
 # publishes a snapshot: image sha-<commit> plus the moving snapshot tag, and chart
-# 0.0.0-snapshot.<UTC commit time>, which sorts below every release. Pull requests only build.
+# 0.0.0-snapshot.<UTC commit time>.g<short commit>, which sorts below every release. Pull
+# requests only build.
 on:
   pull_request:
   push:
@@ -40,7 +41,7 @@ jobs:
             printf 'chart=%s\nimage=%s\nrelease=true\n' "${TAG#v}" "${TAG#v}" >> "$GITHUB_OUTPUT"
           else
             at=$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD)
-            printf 'chart=0.0.0-snapshot.%s\nimage=sha-%s\nrelease=false\n' "$at" "$SHA" >> "$GITHUB_OUTPUT"
+            printf 'chart=0.0.0-snapshot.%s.g%s\nimage=sha-%s\nrelease=false\n' "$at" "${SHA::7}" "$SHA" >> "$GITHUB_OUTPUT"
           fi
 
   image:

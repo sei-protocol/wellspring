@@ -1,9 +1,11 @@
-# One replica with Recreate on purpose: one signer owns the nonce, and two pods
-# sending from the same key pay claims twice. The security contexts are fixed
-# rather than values, so a deployment cannot loosen them.
+# One replica in a StatefulSet on purpose: one signer owns the nonce, and two
+# pods sending from the same key pay claims twice. A StatefulSet starts a
+# replacement only once the old pod is gone, where a Deployment starts it while
+# the old one is still shutting down. The security contexts are fixed rather
+# than values, so a deployment cannot loosen them.
 {{- $captcha := include "wellspring.captchaSecret" . }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "wellspring.fullname" . }}
   labels:
@@ -11,8 +13,10 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 3
-  strategy:
-    type: Recreate
+  serviceName: {{ include "wellspring.fullname" . }}
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels:
       {{- include "wellspring.selectorLabels" . | nindent 6 }}
@@ -96,9 +100,11 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        {{- with .Values.persistence.existingClaim }}
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "wellspring.claimName" . }}
+            claimName: {{ . }}
+        {{- end }}
         - name: signer
           secret:
             secretName: {{ .Values.signer.existingSecret }}
@@ -115,3 +121,17 @@ spec:
               - key: {{ .Values.captcha.key }}
                 path: secret
         {{- end }}
+  {{- if not .Values.persistence.existingClaim }}
+  # Kept when the release is uninstalled, and immutable once created.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

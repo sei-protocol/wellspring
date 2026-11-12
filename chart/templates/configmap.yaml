@@ -6,7 +6,7 @@ metadata:
     {{- include "wellspring.labels" . | nindent 4 }}
 data:
   {{- range $name, $value := .Values.config }}
-  WELLSPRING_{{ $name | upper | replace "-" "_" }}: {{ $value | toString | quote }}
+  WELLSPRING_{{ $name | upper | replace "-" "_" }}: {{ $value | quote }}
   {{- end }}
   WELLSPRING_LISTEN_ADDR: ":8080"
   WELLSPRING_METRICS_ADDR: ":9090"

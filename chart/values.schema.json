@@ -48,10 +48,10 @@
         "pattern": "^[a-z][a-z0-9-]*$",
         "not": { "enum": ["listen-addr", "metrics-addr", "db-path", "private-key-file", "captcha-secret-file"] }
       },
-      "additionalProperties": { "type": ["string", "integer"] },
+      "additionalProperties": { "type": "string" },
       "properties": {
         "rpc-url": { "type": "string", "minLength": 1 },
-        "chain-id": { "type": ["string", "integer"], "pattern": "^[0-9]+$", "minimum": 1 },
+        "chain-id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
         "captcha-provider": { "enum": ["turnstile", "hcaptcha", "none"] }
       }
     },

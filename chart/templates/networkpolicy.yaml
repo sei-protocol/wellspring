@@ -17,11 +17,13 @@ spec:
   ingress:
     - ports:
         - port: http
+    {{- with .Values.networkPolicy.metricsNamespaceSelector }}
     - from:
         - namespaceSelector:
-            {{- toYaml .Values.networkPolicy.metricsNamespaceSelector | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
       ports:
         - port: metrics
+    {{- end }}
   {{- with .Values.networkPolicy.egress }}
   egress:
     {{- toYaml . | nindent 4 }}

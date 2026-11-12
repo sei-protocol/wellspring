@@ -53,7 +53,3 @@ is also pinned to the digest it was built with.
 {{- required "captcha.existingSecret is required unless config.captcha-provider is none" .Values.captcha.existingSecret }}
 {{- end }}
 {{- end }}
-
-{{- define "wellspring.claimName" -}}
-{{- .Values.persistence.existingClaim | default (include "wellspring.fullname" .) }}
-{{- end }}

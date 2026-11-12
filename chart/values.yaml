@@ -24,7 +24,8 @@ captcha:
   key: secret
 
 # wellspring flags, by name without the leading dashes, written to the chart's
-# ConfigMap as WELLSPRING_* variables. rpc-url and chain-id are required; see
+# ConfigMap as WELLSPRING_* variables. Values are strings, so quote numbers:
+# Helm reads an unquoted one as a float and would render 1e+18. rpc-url and chain-id are required; see
 # `wellspring --help` for the rest. The chart sets listen-addr, metrics-addr,
 # db-path, private-key-file and captcha-secret-file itself.
 config: {}
@@ -34,7 +35,8 @@ config: {}
 #   captcha-site-key: 0x4AAAAAAA...
 
 # Holds the SQLite claim database. Losing it forgets cooldowns and unsettled
-# claims, so keep it across upgrades.
+# claims, so keep it across upgrades. Without existingClaim, the StatefulSet
+# creates the claim and keeps it on uninstall; its size cannot change later.
 persistence:
   existingClaim: ""
   storageClassName: ""
@@ -81,7 +83,8 @@ serviceMonitor:
   interval: ""
 
 # Admits traffic to the HTTP port from anywhere and to the metrics port only
-# from namespaces matching metricsNamespaceSelector. egress, when set, also
+# from namespaces matching metricsNamespaceSelector; left empty, the metrics
+# port admits nothing. egress, when set, also
 # restricts outbound traffic to those rules; the pod needs DNS, the RPC and the
 # captcha provider.
 networkPolicy:
