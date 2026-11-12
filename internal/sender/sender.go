@@ -14,6 +14,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,7 +63,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	f := promauto.With(reg)
 	return &metrics{
 		txsSent:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_txs_sent_total", Help: "Transfers broadcast."}),
-		sendErrors: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_send_errors_total", Help: "Broadcasts of new transfers that returned an error."}),
+		sendErrors: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_send_errors_total", Help: "Broadcasts and rebroadcasts the node refused."}),
 		resyncs:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_nonce_resyncs_total", Help: "Nonce resynchronisations with the chain."}),
 		rpcErrors:  f.NewCounter(prometheus.CounterOpts{Name: "wellspring_rpc_errors_total", Help: "Failed RPC reads."}),
 		claimsDone: f.NewCounterVec(prometheus.CounterOpts{Name: "wellspring_claims_finished_total", Help: "Claims by final status."}, []string{"status"}),
@@ -241,7 +242,7 @@ func (s *Sender) resync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	next := committed
+	next, stuck := committed, false
 	for _, c := range claims {
 		nonce := uint64(c.Nonce.Int64) //nolint:gosec // nonces are stored from a uint64
 		if nonce < committed {
@@ -259,19 +260,27 @@ func (s *Sender) resync(ctx context.Context) error {
 		if err := tx.UnmarshalBinary(c.RawTx); err != nil {
 			return err
 		}
-		// An error here usually means the node already has it.
-		if err := s.rpc.SendTransaction(ctx, &tx); err != nil {
-			slog.Debug("rebroadcast", "claim", c.ID, "nonce", nonce, "err", err)
+		if err := s.rpc.SendTransaction(ctx, &tx); err != nil && !alreadyHave(err) {
+			s.metrics.sendErrors.Inc()
+			stuck = true
+			slog.Warn("rebroadcast refused", "claim", c.ID, "nonce", nonce, "err", err)
 		}
 		next = max(next, nonce+1)
 	}
 	s.nonce = next
-	s.needResync = false
+	s.needResync = stuck
 	s.resyncedAt = time.Now()
 	s.metrics.resyncs.Inc()
 	s.metrics.nextNonce.Set(float64(s.nonce))
 	slog.Info("nonce resynced", "committed", committed, "next", next)
 	return nil
+}
+
+// alreadyHave reports whether a broadcast error means the node already has the
+// transaction or has mined it.
+func alreadyHave(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already known") || strings.Contains(msg, "already imported") || strings.Contains(msg, "nonce too low")
 }
 
 // reconcile settles a sent claim whose nonce the chain has already spent.

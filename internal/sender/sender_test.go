@@ -66,6 +66,11 @@ func (c *chain) SendTransaction(_ context.Context, tx *types.Transaction) error 
 		c.refuse--
 		return errors.New("node unavailable")
 	}
+	for _, p := range c.pending {
+		if p.Hash() == tx.Hash() {
+			return errors.New("already known")
+		}
+	}
 	if tx.Nonce() != c.nonce+uint64(len(c.pending)) {
 		return errors.New("invalid nonce")
 	}
@@ -254,4 +259,19 @@ func TestHungRPCTimesOut(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("step blocked on a hung RPC")
 	}
+}
+
+func TestRefusedRebroadcastKeepsResyncing(t *testing.T) {
+	h := newHarness(t)
+	addrs := h.claim(1)
+	h.sender().step(context.Background())
+	h.chain.drop()
+	h.chain.refuse = 2
+	s := h.sender()
+	s.step(context.Background())
+	if !s.needResync {
+		t.Fatal("resync gave up on a refused rebroadcast")
+	}
+	h.drain(s)
+	h.paidOnce(addrs...)
 }
