@@ -1,0 +1,23 @@
+# golangci-lint configuration (schema v2). Keep the version in sync with
+# GOLANGCI_VERSION in the Makefile and the CI workflow.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - revive
+    - unconvert
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/sei-protocol/wellspring
