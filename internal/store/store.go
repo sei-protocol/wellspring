@@ -181,11 +181,6 @@ func (s *Store) MarkSent(ctx context.Context, id string, nonce uint64, hash comm
 		id, StatusSent, int64(nonce), hash.Hex(), raw, now.UnixMilli()) //nolint:gosec // nonces stay far below 2^63
 }
 
-// Requeue returns a sent claim whose transaction never landed to the queue.
-func (s *Store) Requeue(ctx context.Context, id string) error {
-	return s.update(ctx, StatusSent, `status = ?, nonce = NULL, tx_hash = '', raw_tx = NULL, sent_at = NULL`, id, StatusQueued)
-}
-
 // Finish records a sent claim's final status.
 func (s *Store) Finish(ctx context.Context, id string, status Status, errMsg string, now time.Time) error {
 	if status != StatusConfirmed && status != StatusFailed {

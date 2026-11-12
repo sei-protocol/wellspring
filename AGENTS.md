@@ -10,6 +10,9 @@ Testnet faucet for Sei EVM chains. Run `make verify` before pushing; it mirrors 
   add a second sender for the same key or run more than one replica.
 - **Persist before broadcast.** A signed transaction is written to the store
   before it is sent, so a restart can find and reconcile it.
+- **A claim keeps its nonce.** Once signed, a claim's transaction is only ever
+  rebroadcast at the same nonce until its receipt settles it. Re-signing it at a
+  new nonce while the first transaction can still land pays it twice.
 - **The receipt decides.** Giga's EVM-only `CheckTx` is stateless, so a broadcast
   that succeeds can still be rejected in the block. A claim is confirmed only by
   a successful receipt.

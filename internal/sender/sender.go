@@ -2,8 +2,10 @@
 //
 // Giga admits a sender's transaction only at exactly its next nonce, and
 // eth_getTransactionCount reports only the committed nonce. So one goroutine
-// owns the nonce, every transfer is signed and sent in order, and after any
-// doubt the sender waits for the committed nonce to settle and resumes from it.
+// owns the nonce and signs every transfer in order. A claim keeps the nonce it
+// was signed at until its receipt settles it: after any doubt the sender
+// rebroadcasts the same transactions rather than re-signing claims at new
+// nonces, which could pay a claim twice if its first transaction still lands.
 package sender
 
 import (
@@ -25,7 +27,10 @@ import (
 	"github.com/sei-protocol/wellspring/internal/store"
 )
 
-const transferGas = 21_000
+const (
+	transferGas = 21_000
+	rpcTimeout  = 10 * time.Second
+)
 
 // RPC is the subset of the Ethereum JSON-RPC client the sender uses.
 type RPC interface {
@@ -44,8 +49,6 @@ type Config struct {
 	BatchSize      int
 	Interval       time.Duration
 	ConfirmTimeout time.Duration
-	// Settle is how long the committed nonce must hold still before a resync trusts it.
-	Settle time.Duration
 }
 
 type metrics struct {
@@ -59,7 +62,7 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	f := promauto.With(reg)
 	return &metrics{
 		txsSent:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_txs_sent_total", Help: "Transfers broadcast."}),
-		sendErrors: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_send_errors_total", Help: "Broadcasts the node refused."}),
+		sendErrors: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_send_errors_total", Help: "Broadcasts of new transfers that returned an error."}),
 		resyncs:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_nonce_resyncs_total", Help: "Nonce resynchronisations with the chain."}),
 		rpcErrors:  f.NewCounter(prometheus.CounterOpts{Name: "wellspring_rpc_errors_total", Help: "Failed RPC reads."}),
 		claimsDone: f.NewCounterVec(prometheus.CounterOpts{Name: "wellspring_claims_finished_total", Help: "Claims by final status."}, []string{"status"}),
@@ -75,15 +78,16 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 // Sender drains queued claims into transfers.
 type Sender struct {
 	cfg     Config
-	rpc     RPC
+	rpc     timeoutRPC
 	store   *store.Store
 	from    common.Address
 	signer  types.Signer
 	metrics *metrics
 
-	// nonce and needResync are owned by Run's goroutine.
+	// nonce, needResync and resyncedAt are owned by Run's goroutine.
 	nonce      uint64
 	needResync bool
+	resyncedAt time.Time
 
 	mu          sync.Mutex // guards balance and balanceTime
 	balance     *big.Int
@@ -94,7 +98,7 @@ type Sender struct {
 func New(cfg Config, rpc RPC, st *store.Store, reg prometheus.Registerer) *Sender {
 	return &Sender{
 		cfg:        cfg,
-		rpc:        rpc,
+		rpc:        timeoutRPC{rpc: rpc, timeout: rpcTimeout},
 		store:      st,
 		from:       crypto.PubkeyToAddress(cfg.Key.PublicKey),
 		signer:     types.LatestSignerForChainID(cfg.ChainID),
@@ -173,15 +177,17 @@ func (s *Sender) dispatch(ctx context.Context) error {
 		if err := s.store.MarkSent(ctx, c.ID, s.nonce, tx.Hash(), raw, time.Now()); err != nil {
 			return err
 		}
+		// The claim now holds this nonce whether or not the broadcast took, so
+		// an ambiguous error cannot lead to a second transfer for it.
+		s.nonce++
+		s.metrics.nextNonce.Set(float64(s.nonce))
 		if err := s.rpc.SendTransaction(ctx, tx); err != nil {
 			s.metrics.sendErrors.Inc()
 			s.needResync = true
-			slog.Warn("broadcast refused", "claim", c.ID, "nonce", s.nonce, "err", err)
+			slog.Warn("broadcast failed", "claim", c.ID, "nonce", tx.Nonce(), "err", err)
 			return nil
 		}
 		s.metrics.txsSent.Inc()
-		s.nonce++
-		s.metrics.nextNonce.Set(float64(s.nonce))
 	}
 	return nil
 }
@@ -195,7 +201,7 @@ func (s *Sender) confirm(ctx context.Context) error {
 	for _, c := range claims {
 		receipt, err := s.rpc.TransactionReceipt(ctx, common.HexToHash(c.TxHash))
 		if errors.Is(err, ethereum.NotFound) {
-			if time.Since(c.SentAt.Time) > s.cfg.ConfirmTimeout {
+			if time.Since(c.SentAt.Time) > s.cfg.ConfirmTimeout && time.Since(s.resyncedAt) > s.cfg.ConfirmTimeout {
 				s.needResync = true
 			}
 			continue
@@ -211,8 +217,8 @@ func (s *Sender) confirm(ctx context.Context) error {
 	return nil
 }
 
-// settle finishes a claim from its receipt. A failed receipt leaves its nonce
-// unspent, so every transfer signed after it needs a resync.
+// settle finishes a claim from its receipt. On Giga a failed receipt leaves
+// its nonce unspent, so every transfer signed after it needs a resync.
 func (s *Sender) settle(ctx context.Context, c *store.Claim, receipt *types.Receipt) error {
 	if receipt.Status == types.ReceiptStatusSuccessful {
 		s.metrics.claimTime.Observe(time.Since(c.CreatedAt).Seconds())
@@ -222,10 +228,12 @@ func (s *Sender) settle(ctx context.Context, c *store.Claim, receipt *types.Rece
 	return s.finish(ctx, c, store.StatusFailed, "transfer rejected by the chain")
 }
 
-// resync waits for the committed nonce to hold still, settles every sent claim
-// below it, requeues the rest, and continues from the committed nonce.
+// resync settles the sent claims below the committed nonce and rebroadcasts
+// the rest at the nonces they were signed at. A nonce no sent claim holds,
+// left by a claim whose transfer was rejected, is filled with a zero-value
+// transfer to the faucet so the transfers after it can land.
 func (s *Sender) resync(ctx context.Context) error {
-	committed, err := s.settledNonce(ctx)
+	committed, err := s.rpc.NonceAt(ctx, s.from, nil)
 	if err != nil {
 		return err
 	}
@@ -233,58 +241,73 @@ func (s *Sender) resync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	next := committed
 	for _, c := range claims {
-		if c.Nonce.Int64 >= int64(committed) { //nolint:gosec // nonces stay far below 2^63
-			if err := s.store.Requeue(ctx, c.ID); err != nil {
+		nonce := uint64(c.Nonce.Int64) //nolint:gosec // nonces are stored from a uint64
+		if nonce < committed {
+			if err := s.reconcile(ctx, c); err != nil {
 				return err
 			}
 			continue
 		}
-		receipt, err := s.rpc.TransactionReceipt(ctx, common.HexToHash(c.TxHash))
-		switch {
-		case errors.Is(err, ethereum.NotFound):
-			if time.Since(c.SentAt.Time) > s.cfg.ConfirmTimeout {
-				slog.Error("faucet nonce spent by a transaction it did not send", "nonce", c.Nonce.Int64, "claim", c.ID)
-				if err := s.finish(ctx, c, store.StatusFailed, "nonce spent elsewhere"); err != nil {
-					return err
-				}
-			}
-		case err != nil:
-			return err
-		default:
-			if err := s.settle(ctx, c, receipt); err != nil {
+		for ; next < nonce; next++ {
+			if err := s.fill(ctx, next); err != nil {
 				return err
 			}
 		}
+		var tx types.Transaction
+		if err := tx.UnmarshalBinary(c.RawTx); err != nil {
+			return err
+		}
+		// An error here usually means the node already has it.
+		if err := s.rpc.SendTransaction(ctx, &tx); err != nil {
+			slog.Debug("rebroadcast", "claim", c.ID, "nonce", nonce, "err", err)
+		}
+		next = max(next, nonce+1)
 	}
-	s.nonce = committed
+	s.nonce = next
 	s.needResync = false
+	s.resyncedAt = time.Now()
 	s.metrics.resyncs.Inc()
 	s.metrics.nextNonce.Set(float64(s.nonce))
-	slog.Info("nonce resynced", "nonce", committed)
+	slog.Info("nonce resynced", "committed", committed, "next", next)
 	return nil
 }
 
-func (s *Sender) settledNonce(ctx context.Context) (uint64, error) {
-	prev, err := s.rpc.NonceAt(ctx, s.from, nil)
+// reconcile settles a sent claim whose nonce the chain has already spent.
+func (s *Sender) reconcile(ctx context.Context, c *store.Claim) error {
+	receipt, err := s.rpc.TransactionReceipt(ctx, common.HexToHash(c.TxHash))
+	switch {
+	case errors.Is(err, ethereum.NotFound):
+		if time.Since(c.SentAt.Time) <= s.cfg.ConfirmTimeout {
+			return nil
+		}
+		slog.Error("faucet nonce spent by a transaction it did not send", "nonce", c.Nonce.Int64, "claim", c.ID)
+		return s.finish(ctx, c, store.StatusFailed, "nonce spent elsewhere")
+	case err != nil:
+		return err
+	default:
+		return s.settle(ctx, c, receipt)
+	}
+}
+
+// fill spends nonce with a zero-value transfer to the faucet. Filling the same
+// nonce again signs the identical transaction.
+func (s *Sender) fill(ctx context.Context, nonce uint64) error {
+	tx, err := types.SignNewTx(s.cfg.Key, s.signer, &types.DynamicFeeTx{
+		ChainID:   s.cfg.ChainID,
+		Nonce:     nonce,
+		GasTipCap: s.cfg.GasTipCap,
+		GasFeeCap: s.cfg.GasFeeCap,
+		Gas:       transferGas,
+		To:        &s.from,
+		Value:     new(big.Int),
+	})
 	if err != nil {
-		return 0, err
+		return err
 	}
-	for {
-		select {
-		case <-time.After(s.cfg.Settle):
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		}
-		cur, err := s.rpc.NonceAt(ctx, s.from, nil)
-		if err != nil {
-			return 0, err
-		}
-		if cur == prev {
-			return cur, nil
-		}
-		prev = cur
-	}
+	slog.Warn("filling unspent nonce", "nonce", nonce)
+	return s.rpc.SendTransaction(ctx, tx)
 }
 
 func (s *Sender) finish(ctx context.Context, c *store.Claim, status store.Status, msg string) error {
@@ -311,4 +334,34 @@ func (s *Sender) WatchBalance(ctx context.Context, interval time.Duration) error
 			return ctx.Err()
 		}
 	}
+}
+
+// timeoutRPC bounds every call, so one hung request cannot stall the sender.
+type timeoutRPC struct {
+	rpc     RPC
+	timeout time.Duration
+}
+
+func (r timeoutRPC) NonceAt(ctx context.Context, account common.Address, block *big.Int) (uint64, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	return r.rpc.NonceAt(ctx, account, block)
+}
+
+func (r timeoutRPC) BalanceAt(ctx context.Context, account common.Address, block *big.Int) (*big.Int, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	return r.rpc.BalanceAt(ctx, account, block)
+}
+
+func (r timeoutRPC) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	return r.rpc.SendTransaction(ctx, tx)
+}
+
+func (r timeoutRPC) TransactionReceipt(ctx context.Context, hash common.Hash) (*types.Receipt, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	return r.rpc.TransactionReceipt(ctx, hash)
 }

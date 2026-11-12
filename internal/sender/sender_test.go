@@ -32,6 +32,7 @@ type chain struct {
 	receipts map[common.Hash]*types.Receipt
 	paid     map[common.Address]int
 	refuse   int
+	hang     bool
 	rejected map[common.Address]bool
 }
 
@@ -44,9 +45,13 @@ func newChain() *chain {
 	}
 }
 
-func (c *chain) NonceAt(context.Context, common.Address, *big.Int) (uint64, error) {
+func (c *chain) NonceAt(ctx context.Context, _ common.Address, _ *big.Int) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.hang {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
 	return c.nonce, nil
 }
 
@@ -86,7 +91,9 @@ func (c *chain) mine() {
 			break
 		}
 		c.receipts[tx.Hash()] = &types.Receipt{Status: types.ReceiptStatusSuccessful}
-		c.paid[*tx.To()]++
+		if tx.Value().Sign() > 0 {
+			c.paid[*tx.To()]++
+		}
 		c.nonce++
 	}
 	c.pending = nil
@@ -120,7 +127,6 @@ func newHarness(t *testing.T) *harness {
 		GasFeeCap:      big.NewInt(2),
 		BatchSize:      3,
 		ConfirmTimeout: time.Hour,
-		Settle:         time.Millisecond,
 	}}
 }
 
@@ -191,14 +197,14 @@ func TestRefusedBroadcastResyncs(t *testing.T) {
 	h.paidOnce(addrs...)
 }
 
-func TestFailedReceiptRequeuesTheRest(t *testing.T) {
+func TestFailedReceiptFillsItsNonce(t *testing.T) {
 	h := newHarness(t)
 	addrs := h.claim(7)
 	h.chain.rejected[addrs[1]] = true
 	h.drain(h.sender())
 	h.paidOnce(append([]common.Address{addrs[0]}, addrs[2:]...)...)
-	if h.chain.nonce != 6 {
-		t.Fatalf("chain nonce %d, want 6", h.chain.nonce)
+	if h.chain.nonce != 7 {
+		t.Fatalf("chain nonce %d, want 7 (6 transfers and a filler)", h.chain.nonce)
 	}
 }
 
@@ -220,4 +226,32 @@ func TestRestartReconcilesInFlight(t *testing.T) {
 	h.chain.mine() // the first batch lands while the faucet is down
 	h.drain(h.sender())
 	h.paidOnce(addrs...)
+}
+
+func TestPendingTransactionsLandAfterRestart(t *testing.T) {
+	h := newHarness(t)
+	addrs := h.claim(5)
+	h.sender().step(context.Background())
+	s := h.sender()
+	s.step(context.Background())
+	h.chain.mine() // the first batch was still pending when the restarted faucet resynced
+	h.drain(s)
+	h.paidOnce(addrs...)
+}
+
+func TestHungRPCTimesOut(t *testing.T) {
+	h := newHarness(t)
+	h.chain.hang = true
+	s := h.sender()
+	s.rpc.timeout = time.Millisecond
+	done := make(chan struct{})
+	go func() {
+		s.step(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("step blocked on a hung RPC")
+	}
 }
