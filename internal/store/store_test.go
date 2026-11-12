@@ -97,6 +97,9 @@ func TestLifecyclePersists(t *testing.T) {
 	if err := s.Finish(ctx, b.ID, StatusConfirmed, "", t0); !errors.Is(err, ErrWrongStatus) {
 		t.Fatalf("Finish of a queued claim: %v", err)
 	}
+	if err := s.Finish(ctx, a.ID, StatusQueued, "", t0); !errors.Is(err, ErrWrongStatus) {
+		t.Fatalf("Finish to a non-final status: %v", err)
+	}
 	if n, err := s.CountQueued(ctx); err != nil || n != 1 {
 		t.Fatalf("count queued: %d %v", n, err)
 	}

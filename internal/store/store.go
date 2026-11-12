@@ -170,7 +170,8 @@ func (s *Store) InFlight(ctx context.Context) ([]*Claim, error) {
 // CountQueued returns the number of queued claims.
 func (s *Store) CountQueued(ctx context.Context) (int, error) {
 	var n int
-	return n, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM claims WHERE status = ?`, StatusQueued).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM claims WHERE status = ?`, StatusQueued).Scan(&n)
+	return n, err
 }
 
 // MarkSent records a queued claim's signed transaction. Call it before
@@ -187,6 +188,9 @@ func (s *Store) Requeue(ctx context.Context, id string) error {
 
 // Finish records a sent claim's final status.
 func (s *Store) Finish(ctx context.Context, id string, status Status, errMsg string, now time.Time) error {
+	if status != StatusConfirmed && status != StatusFailed {
+		return ErrWrongStatus
+	}
 	return s.update(ctx, StatusSent, `status = ?, error = ?, done_at = ?`, id, status, errMsg, now.UnixMilli())
 }
 
