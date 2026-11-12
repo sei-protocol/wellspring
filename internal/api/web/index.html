@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sei testnet faucet</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1rem;color:#111}
+input,button{font:inherit;padding:.6rem;width:100%;box-sizing:border-box;margin:.4rem 0}
+button{cursor:pointer}#status{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:.9rem}
+small{color:#555}
+</style>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<h1 id="title">Sei testnet faucet</h1>
+<p><small id="meta">Loading…</small></p>
+<form id="form">
+<input id="address" placeholder="0x… EVM address" autocomplete="off" required pattern="0x[0-9a-fA-F]{40}">
+<div id="captcha"></div>
+<button type="submit">Request testnet SEI</button>
+</form>
+<button id="add" type="button" hidden>Add network to wallet</button>
+<p id="status" role="status"></p>
+</body>
+</html>

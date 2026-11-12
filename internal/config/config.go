@@ -27,9 +27,12 @@ type Config struct {
 	LogLevel    slog.Level
 	RPCURL      string
 	// ChainID is the only chain the faucet signs for; the RPC must serve it.
-	ChainID    uint64
-	DBPath     string
-	PrivateKey *ecdsa.PrivateKey
+	ChainID uint64
+	// ChainName and PublicRPCURL are what the web page offers wallets.
+	ChainName    string
+	PublicRPCURL string
+	DBPath       string
+	PrivateKey   *ecdsa.PrivateKey
 
 	Amount *big.Int
 	// MaxRecipientBalance refuses a claim to an address already holding at least this much.
@@ -62,6 +65,8 @@ func Flags() []cli.Flag {
 		str("log-level", "info", "debug, info, warn or error"),
 		str("rpc-url", "", "EVM JSON-RPC endpoint; must serve --chain-id (required)"),
 		&cli.Uint64Flag{Name: "chain-id", Usage: "EVM chain ID to sign for; 1329 (mainnet) is refused (required)", Sources: env("chain-id")},
+		str("chain-name", "Sei testnet", "chain name shown on the page and offered to wallets"),
+		str("public-rpc-url", "", "EVM RPC the page offers wallets; the add-network button is hidden when empty"),
 		str("db-path", "wellspring.db", "SQLite database path"),
 		file("private-key-file", "file holding the hex secp256k1 signer key (required)"),
 		str("amount-wei", "1000000000000000000", "wei sent per claim"),
@@ -115,6 +120,8 @@ func FromCommand(cmd *cli.Command) (*Config, error) {
 		LogLevel:            r.level("log-level"),
 		RPCURL:              cmd.String("rpc-url"),
 		ChainID:             cmd.Uint64("chain-id"),
+		ChainName:           cmd.String("chain-name"),
+		PublicRPCURL:        cmd.String("public-rpc-url"),
 		DBPath:              cmd.String("db-path"),
 		PrivateKey:          r.key(),
 		Amount:              r.wei("amount-wei"),
