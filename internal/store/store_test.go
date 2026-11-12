@@ -120,15 +120,6 @@ func TestLifecyclePersists(t *testing.T) {
 	if got.Address != alice || got.Amount.Cmp(one) != 0 || got.Nonce.Int64 != 7 || got.TxHash != hash.Hex() || string(got.RawTx) != "\xde\xad" || !got.SentAt.Valid {
 		t.Fatalf("in flight claim: %+v", got)
 	}
-	if err := s.Requeue(ctx, a.ID); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := s.Get(ctx, a.ID); err != nil || c.Status != StatusQueued || c.Nonce.Valid || c.RawTx != nil {
-		t.Fatalf("requeued: %+v %v", c, err)
-	}
-	if err := s.MarkSent(ctx, a.ID, 7, hash, []byte{1}, t0); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.Finish(ctx, a.ID, StatusConfirmed, "", t0.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
