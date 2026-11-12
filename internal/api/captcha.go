@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -41,6 +42,15 @@ type siteverify struct {
 
 var errCaptcha = errors.New("captcha verification failed")
 
+// configErrors are siteverify error codes that point at the faucet's own
+// configuration rather than the visitor's token.
+var configErrors = map[string]bool{
+	"missing-input-secret":    true,
+	"invalid-input-secret":    true,
+	"sitekey-secret-mismatch": true,
+	"internal-error":          true,
+}
+
 func (v siteverify) Verify(ctx context.Context, token, ip string) error {
 	if token == "" {
 		return errCaptcha
@@ -57,12 +67,18 @@ func (v siteverify) Verify(ctx context.Context, token, ip string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var out struct {
-		Success bool `json:"success"`
+		Success    bool     `json:"success"`
+		ErrorCodes []string `json:"error-codes"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out); err != nil {
 		return err
 	}
 	if !out.Success {
+		for _, code := range out.ErrorCodes {
+			if configErrors[code] {
+				return fmt.Errorf("captcha provider refused the request: %s", strings.Join(out.ErrorCodes, ", "))
+			}
+		}
 		return errCaptcha
 	}
 	return nil
