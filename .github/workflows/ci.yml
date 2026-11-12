@@ -42,6 +42,29 @@ jobs:
         with:
           version: v2.15.0
 
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # anvil 1.5.1. 6s blocks keep transfers pending across the test's
+      # kill and restart, so a resync must not pay them twice.
+      - run: >-
+          docker run -d -p 127.0.0.1:8545:8545
+          ghcr.io/foundry-rs/foundry@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+          "anvil --host 0.0.0.0 --chain-id 713715 --block-time 6"
+      # anvil's first well-known dev account.
+      - run: echo ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 > "$RUNNER_TEMP/key"
+      - run: make e2e
+        env:
+          WELLSPRING_E2E_RPC_URL: http://127.0.0.1:8545
+          WELLSPRING_E2E_KEY_FILE: ${{ runner.temp }}/key
+
   image:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -3,7 +3,7 @@
 GOLANGCI_VERSION := 2.15.0
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_VERSION)
 
-.PHONY: verify build test lint fmt check-lint-pin
+.PHONY: verify build test e2e lint fmt check-lint-pin
 
 verify: check-lint-pin lint test build
 
@@ -12,6 +12,10 @@ build:
 
 test:
 	go test -race -count=1 ./...
+
+# Needs WELLSPRING_E2E_RPC_URL and WELLSPRING_E2E_KEY_FILE; see e2e/e2e_test.go.
+e2e:
+	go test -tags e2e -count=1 -v ./e2e
 
 lint:
 	$(GOLANGCI_LINT) run ./...
