@@ -32,9 +32,14 @@ func (f *fakeFaucet) Balance() (*big.Int, time.Time) { return f.balance, f.at }
 type fakeBalances struct {
 	held map[common.Address]*big.Int
 	err  error
+	hang bool
 }
 
-func (b *fakeBalances) BalanceAt(_ context.Context, a common.Address, _ *big.Int) (*big.Int, error) {
+func (b *fakeBalances) BalanceAt(ctx context.Context, a common.Address, _ *big.Int) (*big.Int, error) {
+	if b.hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -150,6 +155,16 @@ func TestClaimRefusals(t *testing.T) {
 				t.Fatalf("got %d %v, want %d %s", w.Code, body, tc.want, tc.code)
 			}
 		})
+	}
+}
+
+func TestHungRPCTimesOut(t *testing.T) {
+	defer func(d time.Duration) { rpcTimeout = d }(rpcTimeout)
+	rpcTimeout = time.Millisecond
+	h := newHarness(t)
+	h.balances.hang = true
+	if w := h.do("POST", "/api/claims", claimBody(addr(1))); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("got %d, want %d", w.Code, http.StatusServiceUnavailable)
 	}
 }
 

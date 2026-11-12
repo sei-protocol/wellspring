@@ -61,7 +61,9 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("dial RPC: %w", err)
 	}
 	defer client.Close()
-	chainID, err := client.ChainID(ctx)
+	idCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	chainID, err := client.ChainID(idCtx)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("read chain ID: %w", err)
 	}

@@ -59,7 +59,8 @@ there:
 ```bash
 docker build -t wellspring .
 docker run --read-only -v wellspring-data:/data -v ./secrets:/secrets:ro \
-  -e WELLSPRING_RPC_URL=http://localhost:8545 -e WELLSPRING_CHAIN_ID=713715 \
+  --add-host=host.docker.internal:host-gateway \
+  -e WELLSPRING_RPC_URL=http://host.docker.internal:8545 -e WELLSPRING_CHAIN_ID=713715 \
   -e WELLSPRING_PRIVATE_KEY_FILE=/secrets/key -e WELLSPRING_CAPTCHA_PROVIDER=none \
   -p 8080:8080 -p 9090:9090 wellspring
 ```
