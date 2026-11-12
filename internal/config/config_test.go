@@ -59,7 +59,7 @@ func TestDefaults(t *testing.T) {
 	}
 	if cfg.ChainID != 713715 || cfg.ListenAddr != ":8080" || cfg.LogLevel != slog.LevelInfo ||
 		cfg.Amount.String() != "1000000000000000000" || cfg.AddressCooldown != 24*time.Hour ||
-		cfg.IPLimit != 5 || cfg.GasFeeCap.String() != "10000000000" {
+		cfg.IPLimit != 5 || cfg.ChainName != "Sei testnet" || cfg.GasFeeCap.String() != "10000000000" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 }

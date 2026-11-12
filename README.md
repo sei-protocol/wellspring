@@ -29,6 +29,7 @@ environment variable: `--rpc-url` is `WELLSPRING_RPC_URL`. Run
 | -- | -- | -- |
 | `--rpc-url` | required | EVM JSON-RPC endpoint; must serve `--chain-id` |
 | `--chain-id` | required | EVM chain ID to sign for; 1329 (mainnet) is refused |
+| `--chain-name` / `--public-rpc-url` | `Sei testnet` / none | What the page shows and offers wallets |
 | `--private-key-file` | required | File holding the hex secp256k1 signer key |
 | `--amount-wei` | 1 SEI | Amount per claim |
 | `--max-recipient-balance-wei` | 10 SEI | Refuse addresses already holding this much |
