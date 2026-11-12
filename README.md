@@ -21,24 +21,30 @@ make fmt      # gofmt and goimports
 
 ## Configuration
 
-Everything is read from the environment.
+Every setting is a flag, and each flag can also be set from a `WELLSPRING_*`
+environment variable: `--rpc-url` is `WELLSPRING_RPC_URL`. Run
+`wellspring --help` for the full list and defaults.
 
-| Variable | Default | Meaning |
+| Flag | Default | Meaning |
 | -- | -- | -- |
-| `RPC_URL` | required | EVM JSON-RPC endpoint; must serve `CHAIN_ID` |
-| `CHAIN_ID` | required | EVM chain ID to sign for; 1329 is refused |
-| `PRIVATE_KEY_FILE` / `PRIVATE_KEY` | required, one of | Hex secp256k1 signer key, as a mounted file or a value |
-| `AMOUNT_WEI` | 1 SEI | Amount per claim |
-| `MAX_RECIPIENT_BALANCE_WEI` | 10 SEI | Refuse addresses already holding this much |
-| `MIN_FAUCET_BALANCE_WEI` | 1000 SEI | Below this, `/readyz` fails |
-| `ADDRESS_COOLDOWN` | `24h` | One claim per address per cooldown |
-| `IP_WINDOW` / `IP_LIMIT` | `24h` / 5 | Claims per client IP per window |
-| `MAX_QUEUED` | 1000 | Refuse new claims once this many wait |
-| `TRUST_PROXY_HOPS` | 0 | Reverse proxies in front, for `X-Forwarded-For` |
-| `CAPTCHA_PROVIDER` | `turnstile` | `turnstile`, `hcaptcha`, or `none` for local use |
-| `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET` | required unless `none` | Captcha keys |
-| `BATCH_INTERVAL` / `BATCH_SIZE` | `500ms` / 100 | How often and how many claims to send |
-| `GAS_TIP_CAP_WEI` / `GAS_FEE_CAP_WEI` | 1 / 10 gwei | EIP-1559 fee caps |
-| `CONFIRM_TIMEOUT` | `30s` | Wait for a receipt before resyncing the nonce |
-| `DB_PATH` | `wellspring.db` | SQLite database |
-| `LISTEN_ADDR` / `METRICS_ADDR` | `:8080` / `:9090` | HTTP and Prometheus listeners |
+| `--rpc-url` | required | EVM JSON-RPC endpoint; must serve `--chain-id` |
+| `--chain-id` | required | EVM chain ID to sign for; 1329 (mainnet) is refused |
+| `--private-key-file` | required | File holding the hex secp256k1 signer key |
+| `--amount-wei` | 1 SEI | Amount per claim |
+| `--max-recipient-balance-wei` | 10 SEI | Refuse addresses already holding this much |
+| `--min-faucet-balance-wei` | 1000 SEI | Below this, `/readyz` fails |
+| `--address-cooldown` | `24h` | One claim per address per cooldown |
+| `--ip-window` / `--ip-limit` | `24h` / 5 | Claims per client IP per window |
+| `--max-queued` | 1000 | Refuse new claims once this many wait |
+| `--trust-proxy-hops` | 0 | Reverse proxies in front, for `X-Forwarded-For` |
+| `--captcha-provider` | `turnstile` | `turnstile`, `hcaptcha`, or `none` for local use |
+| `--captcha-site-key` / `--captcha-secret-file` | required unless `none` | Captcha site key and a file holding its secret |
+| `--batch-interval` / `--batch-size` | `500ms` / 100 | How often and how many claims to send |
+| `--gas-tip-cap-wei` / `--gas-fee-cap-wei` | 1 / 10 gwei | EIP-1559 fee caps |
+| `--confirm-timeout` | `30s` | Wait for a receipt before resyncing the nonce |
+| `--db-path` | `wellspring.db` | SQLite database; put it on a persistent volume |
+| `--listen-addr` / `--metrics-addr` | `:8080` / `:9090` | HTTP and Prometheus listeners |
+| `--log-level` | `info` | JSON logs to stdout at this level |
+
+Secrets are only read from files, such as a mounted Kubernetes secret, so they
+never appear in the environment or the pod spec.

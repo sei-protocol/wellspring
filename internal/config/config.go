@@ -1,17 +1,19 @@
-// Package config reads wellspring's configuration from the environment.
+// Package config defines wellspring's flags and validates them into a Config.
+// Every flag can also be set from a WELLSPRING_* environment variable.
 package config
 
 import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/urfave/cli/v3"
 )
 
 // MainnetChainID is pacific-1's EVM chain ID. wellspring is testnet-only and
@@ -22,6 +24,7 @@ const MainnetChainID = 1329
 type Config struct {
 	ListenAddr  string
 	MetricsAddr string
+	LogLevel    slog.Level
 	RPCURL      string
 	// ChainID is the only chain the faucet signs for; the RPC must serve it.
 	ChainID    uint64
@@ -50,55 +53,110 @@ type Config struct {
 	ConfirmTimeout time.Duration
 }
 
-// Load reads Config through getenv, usually os.LookupEnv.
-func Load(getenv func(string) (string, bool)) (*Config, error) {
-	r := reader{getenv: getenv}
-	c := &Config{
-		ListenAddr:          r.str("LISTEN_ADDR", ":8080"),
-		MetricsAddr:         r.str("METRICS_ADDR", ":9090"),
-		RPCURL:              r.str("RPC_URL", ""),
-		DBPath:              r.str("DB_PATH", "wellspring.db"),
-		ChainID:             r.uint64("CHAIN_ID", 0),
-		PrivateKey:          r.key(),
-		Amount:              r.wei("AMOUNT_WEI", "1000000000000000000"),
-		MaxRecipientBalance: r.wei("MAX_RECIPIENT_BALANCE_WEI", "10000000000000000000"),
-		MinFaucetBalance:    r.wei("MIN_FAUCET_BALANCE_WEI", "1000000000000000000000"),
-		AddressCooldown:     r.duration("ADDRESS_COOLDOWN", 24*time.Hour),
-		IPWindow:            r.duration("IP_WINDOW", 24*time.Hour),
-		IPLimit:             r.int("IP_LIMIT", 5),
-		MaxQueued:           r.int("MAX_QUEUED", 1000),
-		TrustProxyHops:      r.int("TRUST_PROXY_HOPS", 0),
-		CaptchaProvider:     r.str("CAPTCHA_PROVIDER", "turnstile"),
-		CaptchaSiteKey:      r.str("CAPTCHA_SITE_KEY", ""),
-		CaptchaSecret:       r.str("CAPTCHA_SECRET", ""),
-		BatchInterval:       r.duration("BATCH_INTERVAL", 500*time.Millisecond),
-		BatchSize:           r.int("BATCH_SIZE", 100),
-		GasTipCap:           r.wei("GAS_TIP_CAP_WEI", "1000000000"),
-		GasFeeCap:           r.wei("GAS_FEE_CAP_WEI", "10000000000"),
-		ConfirmTimeout:      r.duration("CONFIRM_TIMEOUT", 30*time.Second),
+// Flags returns wellspring's flags. Secrets are only read from files, so they
+// stay out of the process environment and the pod spec.
+func Flags() []cli.Flag {
+	return []cli.Flag{
+		str("listen-addr", ":8080", "HTTP listen address"),
+		str("metrics-addr", ":9090", "Prometheus listen address"),
+		str("log-level", "info", "debug, info, warn or error"),
+		str("rpc-url", "", "EVM JSON-RPC endpoint; must serve --chain-id (required)"),
+		&cli.Uint64Flag{Name: "chain-id", Usage: "EVM chain ID to sign for; 1329 (mainnet) is refused (required)", Sources: env("chain-id")},
+		str("db-path", "wellspring.db", "SQLite database path"),
+		file("private-key-file", "file holding the hex secp256k1 signer key (required)"),
+		str("amount-wei", "1000000000000000000", "wei sent per claim"),
+		str("max-recipient-balance-wei", "10000000000000000000", "refuse addresses already holding this much"),
+		str("min-faucet-balance-wei", "1000000000000000000000", "below this balance the faucet reports not ready"),
+		dur("address-cooldown", 24*time.Hour, "one claim per address per cooldown"),
+		dur("ip-window", 24*time.Hour, "window for --ip-limit"),
+		num("ip-limit", 5, "claims per client IP per --ip-window"),
+		num("max-queued", 1000, "refuse new claims once this many wait"),
+		num("trust-proxy-hops", 0, "reverse proxies in front that append to X-Forwarded-For"),
+		str("captcha-provider", "turnstile", "turnstile, hcaptcha, or none for local use"),
+		str("captcha-site-key", "", "public captcha site key"),
+		file("captcha-secret-file", "file holding the captcha secret"),
+		dur("batch-interval", 500*time.Millisecond, "how often queued claims are sent"),
+		num("batch-size", 100, "most claims sent per interval"),
+		str("gas-tip-cap-wei", "1000000000", "EIP-1559 tip cap"),
+		str("gas-fee-cap-wei", "10000000000", "EIP-1559 fee cap"),
+		dur("confirm-timeout", 30*time.Second, "how long to wait for a receipt before resyncing the nonce"),
 	}
-	r.check(c.RPCURL != "", "RPC_URL is required")
-	r.check(c.ChainID != 0, "CHAIN_ID is required")
-	r.check(c.ChainID != MainnetChainID, "CHAIN_ID 1329 is Sei mainnet; wellspring is testnet-only")
+}
+
+// EnvVar returns the environment variable that sets flag name.
+func EnvVar(name string) string {
+	return "WELLSPRING_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+func env(name string) cli.ValueSourceChain { return cli.EnvVars(EnvVar(name)) }
+
+func str(name, value, usage string) cli.Flag {
+	return &cli.StringFlag{Name: name, Value: value, Usage: usage, Sources: env(name)}
+}
+
+func file(name, usage string) cli.Flag {
+	return &cli.StringFlag{Name: name, Usage: usage, Sources: env(name), TakesFile: true}
+}
+
+func dur(name string, value time.Duration, usage string) cli.Flag {
+	return &cli.DurationFlag{Name: name, Value: value, Usage: usage, Sources: env(name)}
+}
+
+func num(name string, value int, usage string) cli.Flag {
+	return &cli.IntFlag{Name: name, Value: value, Usage: usage, Sources: env(name)}
+}
+
+// FromCommand validates cmd's flags into a Config, reporting every problem at once.
+func FromCommand(cmd *cli.Command) (*Config, error) {
+	r := reader{cmd: cmd}
+	c := &Config{
+		ListenAddr:          cmd.String("listen-addr"),
+		MetricsAddr:         cmd.String("metrics-addr"),
+		LogLevel:            r.level("log-level"),
+		RPCURL:              cmd.String("rpc-url"),
+		ChainID:             cmd.Uint64("chain-id"),
+		DBPath:              cmd.String("db-path"),
+		PrivateKey:          r.key(),
+		Amount:              r.wei("amount-wei"),
+		MaxRecipientBalance: r.wei("max-recipient-balance-wei"),
+		MinFaucetBalance:    r.wei("min-faucet-balance-wei"),
+		AddressCooldown:     r.positive("address-cooldown"),
+		IPWindow:            r.positive("ip-window"),
+		IPLimit:             cmd.Int("ip-limit"),
+		MaxQueued:           cmd.Int("max-queued"),
+		TrustProxyHops:      cmd.Int("trust-proxy-hops"),
+		CaptchaProvider:     cmd.String("captcha-provider"),
+		CaptchaSiteKey:      cmd.String("captcha-site-key"),
+		BatchInterval:       r.positive("batch-interval"),
+		BatchSize:           cmd.Int("batch-size"),
+		GasTipCap:           r.wei("gas-tip-cap-wei"),
+		GasFeeCap:           r.wei("gas-fee-cap-wei"),
+		ConfirmTimeout:      r.positive("confirm-timeout"),
+	}
+	r.check(c.RPCURL != "", "--rpc-url is required")
+	r.check(c.ChainID != 0, "--chain-id is required")
+	r.check(c.ChainID != MainnetChainID, "--chain-id 1329 is Sei mainnet; wellspring is testnet-only")
 	switch c.CaptchaProvider {
 	case "turnstile", "hcaptcha":
-		r.check(c.CaptchaSiteKey != "" && c.CaptchaSecret != "", "CAPTCHA_SITE_KEY and CAPTCHA_SECRET are required for "+c.CaptchaProvider)
+		c.CaptchaSecret = r.secret("captcha-secret-file")
+		r.check(c.CaptchaSiteKey != "", "--captcha-site-key is required for "+c.CaptchaProvider)
 	case "none":
 	default:
-		r.check(false, fmt.Sprintf("CAPTCHA_PROVIDER %q is not turnstile, hcaptcha or none", c.CaptchaProvider))
+		r.check(false, fmt.Sprintf("--captcha-provider %q is not turnstile, hcaptcha or none", c.CaptchaProvider))
 	}
-	r.check(c.Amount.Sign() > 0, "AMOUNT_WEI must be positive")
-	r.check(c.GasFeeCap.Cmp(c.GasTipCap) >= 0, "GAS_FEE_CAP_WEI must be at least GAS_TIP_CAP_WEI")
-	r.check(c.IPLimit > 0 && c.MaxQueued > 0 && c.BatchSize > 0, "IP_LIMIT, MAX_QUEUED and BATCH_SIZE must be positive")
-	r.check(c.TrustProxyHops >= 0, "TRUST_PROXY_HOPS must not be negative")
-	r.check(c.AddressCooldown > 0 && c.IPWindow > 0 && c.BatchInterval > 0 && c.ConfirmTimeout > 0,
-		"ADDRESS_COOLDOWN, IP_WINDOW, BATCH_INTERVAL and CONFIRM_TIMEOUT must be positive")
-	return c, errors.Join(r.errs...)
+	r.check(c.Amount == nil || c.Amount.Sign() > 0, "--amount-wei must be positive")
+	r.check(c.GasFeeCap == nil || c.GasTipCap == nil || c.GasFeeCap.Cmp(c.GasTipCap) >= 0, "--gas-fee-cap-wei must be at least --gas-tip-cap-wei")
+	r.check(c.IPLimit > 0 && c.MaxQueued > 0 && c.BatchSize > 0, "--ip-limit, --max-queued and --batch-size must be positive")
+	r.check(c.TrustProxyHops >= 0, "--trust-proxy-hops must not be negative")
+	if len(r.errs) > 0 {
+		return nil, errors.Join(r.errs...)
+	}
+	return c, nil
 }
 
 type reader struct {
-	getenv func(string) (string, bool)
-	errs   []error
+	cmd  *cli.Command
+	errs []error
 }
 
 func (r *reader) check(ok bool, msg string) {
@@ -107,70 +165,53 @@ func (r *reader) check(ok bool, msg string) {
 	}
 }
 
-func (r *reader) str(name, def string) string {
-	if v, ok := r.getenv(name); ok && v != "" {
-		return v
-	}
-	return def
+func (r *reader) level(name string) slog.Level {
+	var l slog.Level
+	r.check(l.UnmarshalText([]byte(r.cmd.String(name))) == nil, "--"+name+" must be debug, info, warn or error")
+	return l
 }
 
-func (r *reader) int(name string, def int) int {
-	v, err := strconv.Atoi(r.str(name, strconv.Itoa(def)))
-	if err != nil {
-		r.errs = append(r.errs, fmt.Errorf("%s must be an integer", name))
-	}
-	return v
+func (r *reader) positive(name string) time.Duration {
+	d := r.cmd.Duration(name)
+	r.check(d > 0, "--"+name+" must be positive")
+	return d
 }
 
-func (r *reader) uint64(name string, def uint64) uint64 {
-	v, err := strconv.ParseUint(r.str(name, strconv.FormatUint(def, 10)), 10, 64)
-	if err != nil {
-		r.errs = append(r.errs, fmt.Errorf("%s must be an unsigned integer", name))
-	}
-	return v
-}
-
-func (r *reader) duration(name string, def time.Duration) time.Duration {
-	v, err := time.ParseDuration(r.str(name, def.String()))
-	if err != nil {
-		r.errs = append(r.errs, fmt.Errorf("%s must be a duration", name))
-	}
-	return v
-}
-
-func (r *reader) wei(name, def string) *big.Int {
-	v, ok := new(big.Int).SetString(r.str(name, def), 10)
+func (r *reader) wei(name string) *big.Int {
+	v, ok := new(big.Int).SetString(r.cmd.String(name), 10)
 	if !ok || v.Sign() < 0 || v.BitLen() > 256 {
-		r.errs = append(r.errs, fmt.Errorf("%s must be a decimal wei amount below 2^256", name))
-		return new(big.Int)
+		r.check(false, "--"+name+" must be a decimal uint256")
+		return nil
 	}
 	return v
 }
 
-// key reads the signer key from PRIVATE_KEY_FILE (a mounted secret) or
-// PRIVATE_KEY, never both. Errors never include the value.
+// secret reads the trimmed contents of the file flag name points at. Errors
+// never include the contents.
+func (r *reader) secret(name string) string {
+	path := r.cmd.String(name)
+	if path == "" {
+		r.check(false, "--"+name+" is required")
+		return ""
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // the operator sets the path
+	if err != nil {
+		r.check(false, "--"+name+" is not readable")
+		return ""
+	}
+	s := strings.TrimSpace(string(b))
+	r.check(s != "", "--"+name+" is empty")
+	return s
+}
+
 func (r *reader) key() *ecdsa.PrivateKey {
-	hex, fromEnv := r.getenv("PRIVATE_KEY")
-	path, fromFile := r.getenv("PRIVATE_KEY_FILE")
-	fromEnv, fromFile = fromEnv && hex != "", fromFile && path != ""
-	switch {
-	case fromEnv && fromFile:
-		r.check(false, "set only one of PRIVATE_KEY and PRIVATE_KEY_FILE")
-		return nil
-	case fromFile:
-		b, err := os.ReadFile(path) //nolint:gosec // the operator sets the path
-		if err != nil {
-			r.check(false, "PRIVATE_KEY_FILE is not readable")
-			return nil
-		}
-		hex = string(b)
-	case !fromEnv:
-		r.check(false, "PRIVATE_KEY or PRIVATE_KEY_FILE is required")
+	hex := r.secret("private-key-file")
+	if hex == "" {
 		return nil
 	}
-	k, err := crypto.HexToECDSA(strings.TrimPrefix(strings.TrimSpace(hex), "0x"))
+	k, err := crypto.HexToECDSA(strings.TrimPrefix(hex, "0x"))
 	if err != nil {
-		r.check(false, "the private key must be a hex secp256k1 key")
+		r.check(false, "--private-key-file must hold a hex secp256k1 key")
 		return nil
 	}
 	return k
