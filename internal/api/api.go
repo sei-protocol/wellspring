@@ -26,6 +26,9 @@ import (
 // the faucet reports not ready.
 const BalanceMaxAge = time.Minute
 
+// rpcTimeout bounds the recipient balance read a claim waits on.
+var rpcTimeout = 10 * time.Second
+
 const csp = "default-src 'self'; " +
 	"script-src 'self' https://challenges.cloudflare.com https://js.hcaptcha.com https://*.hcaptcha.com; " +
 	"frame-src https://challenges.cloudflare.com https://*.hcaptcha.com; " +
@@ -143,7 +146,9 @@ func (s *Server) createClaim(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, http.StatusForbidden, "captcha", "captcha verification failed", 0)
 		return
 	}
-	held, err := s.balances.BalanceAt(r.Context(), to, nil)
+	bctx, cancel := context.WithTimeout(r.Context(), rpcTimeout)
+	held, err := s.balances.BalanceAt(bctx, to, nil)
+	cancel()
 	if err != nil {
 		s.refuse(w, http.StatusServiceUnavailable, "rpc", "chain unavailable, try again shortly", time.Minute)
 		return

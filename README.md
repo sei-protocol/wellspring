@@ -49,3 +49,43 @@ environment variable: `--rpc-url` is `WELLSPRING_RPC_URL`. Run
 
 Secrets are only read from files, such as a mounted Kubernetes secret, so they
 never appear in the environment or the pod spec.
+
+## Container
+
+The image is distroless and runs as the `nonroot` user (UID/GID 65532). It
+only writes to `/data`, so run it with a read-only root filesystem and a volume
+there:
+
+```bash
+docker build -t wellspring .
+docker run --read-only -v wellspring-data:/data -v ./secrets:/secrets:ro \
+  --add-host=host.docker.internal:host-gateway \
+  -e WELLSPRING_RPC_URL=http://host.docker.internal:8545 -e WELLSPRING_CHAIN_ID=713715 \
+  -e WELLSPRING_PRIVATE_KEY_FILE=/secrets/key -e WELLSPRING_CAPTCHA_PROVIDER=none \
+  -p 8080:8080 -p 9090:9090 wellspring
+```
+
+On SIGTERM it stops taking claims, stops the sender and closes the database.
+Claims it had not settled are reconciled from the chain on the next start. `/healthz` is
+liveness; `/readyz` also checks the RPC and the faucet balance.
+
+On Kubernetes, run a single replica with the `Recreate` strategy, since one
+signer owns the nonce, and mount a PVC at `/data` with this security context:
+
+```yaml
+automountServiceAccountToken: false
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containers:
+  - name: wellspring
+    securityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+```
