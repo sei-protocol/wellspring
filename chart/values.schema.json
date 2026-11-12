@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "name": { "type": "string", "minLength": 1 },
+    "dnsName": { "anyOf": [{ "const": "" }, { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }] },
+    "strings": { "type": "object", "additionalProperties": { "type": "string" } }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "signer", "captcha", "config", "persistence", "service"],
+  "properties": {
+    "nameOverride": { "$ref": "#/definitions/dnsName" },
+    "fullnameOverride": { "$ref": "#/definitions/dnsName" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": { "$ref": "#/definitions/name" },
+        "tag": { "type": "string", "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$" },
+        "digest": { "type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "signer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existingSecret", "key"],
+      "properties": {
+        "existingSecret": { "$ref": "#/definitions/name" },
+        "key": { "$ref": "#/definitions/name" }
+      }
+    },
+    "captcha": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existingSecret", "key"],
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "key": { "$ref": "#/definitions/name" }
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": ["rpc-url", "chain-id"],
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]*$",
+        "not": { "enum": ["listen-addr", "metrics-addr", "db-path", "private-key-file", "captcha-secret-file"] }
+      },
+      "additionalProperties": { "type": ["string", "integer"] },
+      "properties": {
+        "rpc-url": { "type": "string", "minLength": 1 },
+        "chain-id": { "type": ["string", "integer"], "pattern": "^[0-9]+$", "minimum": 1 },
+        "captcha-provider": { "enum": ["turnstile", "hcaptcha", "none"] }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingClaim": { "type": "string" },
+        "storageClassName": { "type": "string" },
+        "size": { "$ref": "#/definitions/name" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/strings" }
+      }
+    },
+    "podAnnotations": { "$ref": "#/definitions/strings" },
+    "podLabels": { "$ref": "#/definitions/strings" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "resources": { "type": "object" },
+    "nodeSelector": { "$ref": "#/definitions/strings" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port"],
+      "properties": { "port": { "type": "integer", "minimum": 1, "maximum": 65535, "not": { "const": 9090 } } }
+    },
+    "httpRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "annotations": { "$ref": "#/definitions/strings" },
+        "parentRefs": { "type": "array" },
+        "hostnames": { "type": "array", "items": { "type": "string" } }
+      },
+      "if": { "properties": { "enabled": { "const": true } } },
+      "then": {
+        "properties": {
+          "parentRefs": { "minItems": 1 },
+          "hostnames": { "minItems": 1 }
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": { "$ref": "#/definitions/strings" },
+        "interval": { "type": "string" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "metricsNamespaceSelector": { "type": "object" },
+        "egress": { "type": "array" }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+apiVersion: v2
+name: wellspring
+description: Testnet faucet for Sei EVM chains.
+type: application
+# The release workflow sets version and appVersion when it publishes: X.Y.Z from
+# a vX.Y.Z tag, or a 0.0.0-snapshot.<time> snapshot of main with its sha image.
+version: 0.0.0
+appVersion: snapshot
+home: https://github.com/sei-protocol/wellspring
+sources:
+  - https://github.com/sei-protocol/wellspring
