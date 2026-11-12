@@ -77,10 +77,12 @@ func (s *Server) Handler() http.Handler {
 		r.URL.Path = "/web/"
 		static.ServeHTTP(w, r)
 	})
-	mux.HandleFunc("GET /app.js", func(w http.ResponseWriter, r *http.Request) {
-		r.URL.Path = "/web/app.js"
-		static.ServeHTTP(w, r)
-	})
+	for _, name := range []string{"app.js", "app.css", "sei.svg"} {
+		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = "/web/" + name
+			static.ServeHTTP(w, r)
+		})
+	}
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("POST /api/claims", s.createClaim)
 	mux.HandleFunc("GET /api/claims/{id}", s.getClaim)

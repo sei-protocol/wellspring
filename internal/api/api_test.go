@@ -229,8 +229,10 @@ func TestPage(t *testing.T) {
 		!strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("index: %d %v", w.Code, w.Header())
 	}
-	if w := h.do("GET", "/app.js", ""); w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
-		t.Fatalf("app.js: %d %s", w.Code, w.Header().Get("Content-Type"))
+	for path, kind := range map[string]string{"/app.js": "javascript", "/app.css": "css", "/sei.svg": "svg"} {
+		if w := h.do("GET", path, ""); w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), kind) {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Header().Get("Content-Type"))
+		}
 	}
 	if w := h.do("GET", "/web/app.js", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("/web/app.js: %d", w.Code)
