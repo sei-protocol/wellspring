@@ -29,6 +29,7 @@ async function load() {
 
 window.onCaptcha = (t) => { token = t; };
 window.onCaptchaExpired = () => { token = ""; };
+$("address").oninvalid = () => { polling++; show(""); };
 
 // Captcha tokens are single-use, so every submit needs a fresh one.
 function resetCaptcha() {
