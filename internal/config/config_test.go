@@ -103,6 +103,7 @@ func TestInvalid(t *testing.T) {
 		{"captcha without site key", []string{"--captcha-provider", "turnstile", "--captcha-secret-file", writeFile(t, "x")}, "--captcha-site-key is required"},
 		{"empty captcha secret", []string{"--captcha-provider", "turnstile", "--captcha-site-key", "s", "--captcha-secret-file", writeFile(t, " \n")}, "is empty"},
 		{"zero amount", []string{"--amount-wei", "0"}, "--amount-wei must be positive"},
+		{"zero max recipient balance", []string{"--max-recipient-balance-wei", "0"}, "--max-recipient-balance-wei must be positive"},
 		{"oversized amount", []string{"--amount-wei", "1" + strings.Repeat("0", 78)}, "decimal uint256"},
 		{"negative amount", []string{"--amount-wei", "-1"}, "decimal uint256"},
 		{"fee below tip", []string{"--gas-fee-cap-wei", "1", "--gas-tip-cap-wei", "2"}, "at least --gas-tip-cap-wei"},

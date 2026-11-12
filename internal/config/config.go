@@ -145,6 +145,7 @@ func FromCommand(cmd *cli.Command) (*Config, error) {
 		r.check(false, fmt.Sprintf("--captcha-provider %q is not turnstile, hcaptcha or none", c.CaptchaProvider))
 	}
 	r.check(c.Amount == nil || c.Amount.Sign() > 0, "--amount-wei must be positive")
+	r.check(c.MaxRecipientBalance == nil || c.MaxRecipientBalance.Sign() > 0, "--max-recipient-balance-wei must be positive")
 	r.check(c.GasFeeCap == nil || c.GasTipCap == nil || c.GasFeeCap.Cmp(c.GasTipCap) >= 0, "--gas-fee-cap-wei must be at least --gas-tip-cap-wei")
 	r.check(c.IPLimit > 0 && c.MaxQueued > 0 && c.BatchSize > 0, "--ip-limit, --max-queued and --batch-size must be positive")
 	r.check(c.TrustProxyHops >= 0, "--trust-proxy-hops must not be negative")
