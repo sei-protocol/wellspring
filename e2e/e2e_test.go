@@ -65,14 +65,12 @@ func TestFaucet(t *testing.T) {
 	if out, err := exec.CommandContext(ctx, "go", "build", "-o", bin, "../cmd/wellspring").CombinedOutput(); err != nil { //nolint:gosec // bin is a temp path
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	f := &instance{t: t, bin: bin, env: []string{
+	f := &instance{t: t, bin: bin, env: os.Environ()}
+	f.env = append(f.env,
 		"WELLSPRING_CAPTCHA_PROVIDER=none",
 		"WELLSPRING_IP_LIMIT=1000",
 		"WELLSPRING_BATCH_SIZE=5",
-		"WELLSPRING_AMOUNT_WEI=" + strconv.Itoa(amount),
-	}}
-	f.env = append(f.env, os.Environ()...)
-	f.env = append(f.env,
+		"WELLSPRING_AMOUNT_WEI="+strconv.Itoa(amount),
 		"WELLSPRING_RPC_URL="+rpcURL,
 		"WELLSPRING_CHAIN_ID="+chainID.String(),
 		"WELLSPRING_PRIVATE_KEY_FILE="+keyFile,
@@ -111,7 +109,21 @@ func TestFaucet(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	f.wait(ids[0], "sent")
+	f.poll("a claim sent but not confirmed", func() bool {
+		confirmed := 0
+		for _, id := range ids {
+			switch f.status(id).Status {
+			case "sent":
+				return true
+			case "confirmed":
+				confirmed++
+			}
+		}
+		if confirmed == len(ids) {
+			f.t.Fatal("every claim confirmed before the kill, so the run did not test recovery")
+		}
+		return false
+	})
 	f.kill(syscall.SIGKILL)
 
 	f.start()
@@ -210,23 +222,30 @@ type claimView struct {
 	Error  string `json:"error"`
 }
 
-// wait polls claim id until it reaches status, or any later one for "sent".
+// wait polls claim id until it reaches status.
 func (f *instance) wait(id, status string) claimView {
 	f.t.Helper()
 	var c claimView
 	f.poll("claim "+id+" "+status, func() bool {
-		resp, err := f.do(http.MethodGet, "/api/claims/"+id, nil)
-		if err != nil {
-			return false
-		}
-		defer func() { _ = resp.Body.Close() }()
-		c = claimView{}
-		_ = json.NewDecoder(resp.Body).Decode(&c)
-		if c.Status == "failed" {
-			f.t.Fatalf("claim %s failed: %s", id, c.Error)
-		}
-		return c.Status == status || (status == "sent" && c.Status == "confirmed")
+		c = f.status(id)
+		return c.Status == status
 	})
+	return c
+}
+
+// status returns claim id, failing the test if the claim failed.
+func (f *instance) status(id string) claimView {
+	f.t.Helper()
+	var c claimView
+	resp, err := f.do(http.MethodGet, "/api/claims/"+id, nil)
+	if err != nil {
+		return c
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_ = json.NewDecoder(resp.Body).Decode(&c)
+	if c.Status == "failed" {
+		f.t.Fatalf("claim %s failed: %s", id, c.Error)
+	}
 	return c
 }
 

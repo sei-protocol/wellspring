@@ -25,7 +25,7 @@ against anvil. To run it against a local Giga (Autobahn) devnet whose genesis
 funds the signer:
 
 ```bash
-WELLSPRING_E2E_RPC_URL=http://localhost:8545 WELLSPRING_E2E_KEY_FILE=key make e2e
+WELLSPRING_E2E_RPC_URL=http://localhost:8545 WELLSPRING_E2E_KEY_FILE="$PWD/key" make e2e
 ```
 
 ## Configuration
