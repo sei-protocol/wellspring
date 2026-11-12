@@ -2,6 +2,10 @@
 # GOLANGCI_VERSION in the Makefile and the CI workflow.
 version: "2"
 
+run:
+  build-tags:
+    - e2e
+
 linters:
   default: standard
   enable:

@@ -19,6 +19,15 @@ make verify   # lint, race tests and build, as CI runs them
 make fmt      # gofmt and goimports
 ```
 
+`make e2e` runs the binary against a real node: 31 claims, a SIGKILL mid-batch
+and a restart, then checks every recipient was paid exactly once. CI runs it
+against anvil. To run it against a local Giga (Autobahn) devnet whose genesis
+funds the signer:
+
+```bash
+WELLSPRING_E2E_RPC_URL=http://localhost:8545 WELLSPRING_E2E_KEY_FILE=key make e2e
+```
+
 ## Configuration
 
 Every setting is a flag, and each flag can also be set from a `WELLSPRING_*`
