@@ -78,23 +78,28 @@ On SIGTERM it stops taking claims, stops the sender and closes the database.
 Claims it had not settled are reconciled from the chain on the next start. `/healthz` is
 liveness; `/readyz` also checks the RPC and the faucet balance.
 
-On Kubernetes, run a single replica with the `Recreate` strategy, since one
-signer owns the nonce, and mount a PVC at `/data` with this security context:
+## Kubernetes
 
-```yaml
-automountServiceAccountToken: false
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 65532
-  runAsGroup: 65532
-  fsGroup: 65532
-  seccompProfile:
-    type: RuntimeDefault
-containers:
-  - name: wellspring
-    securityContext:
-      readOnlyRootFilesystem: true
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop: ["ALL"]
+The Helm chart in `chart/` runs it the only safe way: a single-replica
+StatefulSet, which never starts a second pod while the first is still shutting
+down, since one signer owns the nonce, a PVC at `/data`, and a
+fixed security context (UID/GID 65532, read-only root filesystem, no
+capabilities, no service account token). Merges to main publish a snapshot
+image and chart; a `vX.Y.Z` tag publishes a release, with the chart pinned to
+its image by digest.
+
+The chart never creates secrets. Create the signer key and captcha secret
+yourself, then install:
+
+```bash
+kubectl create secret generic wellspring-signer --from-file=private-key=./key
+kubectl create secret generic wellspring-captcha --from-file=secret=./captcha-secret
+helm install wellspring oci://ghcr.io/sei-protocol/charts/wellspring --version <version> \
+  --set config.rpc-url=http://fullnode:8545 --set-string config.chain-id=713715 \
+  --set config.captcha-site-key=<site key> --set captcha.existingSecret=wellspring-captcha
 ```
+
+`config` takes any flag by name as a string, such as `config.amount-wei`. Set
+`config.trust-proxy-hops` to the number of proxies in front, or every claim
+counts against the proxy's IP. See `chart/values.yaml` for the HTTPRoute,
+ServiceMonitor and NetworkPolicy settings.

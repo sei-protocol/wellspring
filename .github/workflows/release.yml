@@ -1,0 +1,131 @@
+name: Release
+
+# A vX.Y.Z tag on a commit on main publishes image X.Y.Z and chart X.Y.Z. Every merge to main
+# publishes a snapshot: image sha-<commit> plus the moving snapshot tag, and chart
+# 0.0.0-snapshot.<UTC commit time>.g<short commit>, which sorts below every release. Pull
+# requests only build.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      chart: ${{ steps.version.outputs.chart }}
+      image: ${{ steps.version.outputs.image }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: version
+        env:
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [[ $REF == refs/tags/* ]]; then
+            [[ $TAG =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::$TAG is not vX.Y.Z"; exit 1; }
+            git merge-base --is-ancestor HEAD origin/main || { echo "::error::$TAG is not on main"; exit 1; }
+            printf 'chart=%s\nimage=%s\nrelease=true\n' "${TAG#v}" "${TAG#v}" >> "$GITHUB_OUTPUT"
+          else
+            at=$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD)
+            printf 'chart=0.0.0-snapshot.%s.g%s\nimage=sha-%s\nrelease=false\n' "$at" "${SHA::7}" "$SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - if: needs.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.image }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION is already published"
+            exit 1
+          fi
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.version.outputs.image }}
+            type=raw,value=snapshot,enable=${{ github.ref == 'refs/heads/main' }}
+      # The Dockerfile cross-compiles, so arm64 builds without emulation.
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  chart:
+    needs: [version, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make chart-lint
+      # The published chart defaults to the image this run built, pinned by the digest in its
+      # sei.io/image-digest annotation. GHCR answers denied rather than not found for a chart
+      # version it has never seen.
+      - if: github.event_name != 'pull_request'
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.chart }}
+          APP_VERSION: ${{ needs.version.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          RELEASE: ${{ needs.version.outputs.release }}
+        run: |
+          echo "$TOKEN" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+          if out=$(helm show chart oci://ghcr.io/sei-protocol/charts/wellspring --version "$VERSION" 2>&1); then
+            [[ $RELEASE == true ]] && { echo "::error::chart $VERSION is already published"; exit 1; }
+            echo "chart $VERSION is already published"
+          elif grep -qE "not found|denied" <<< "$out"; then
+            yq -i '.annotations["sei.io/image-digest"] = strenv(DIGEST)' chart/Chart.yaml
+            helm package chart --version "$VERSION" --app-version "$APP_VERSION"
+            helm push "wellspring-$VERSION.tgz" oci://ghcr.io/sei-protocol/charts
+          else
+            echo "$out"
+            exit 1
+          fi

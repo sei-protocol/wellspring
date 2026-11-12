@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wellspring.fullname" . }}
+  labels:
+    {{- include "wellspring.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "wellspring.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wellspring.fullname" . }}
+  labels:
+    {{- include "wellspring.labels" . | nindent 4 }}
+data:
+  {{- range $name, $value := .Values.config }}
+  WELLSPRING_{{ $name | upper | replace "-" "_" }}: {{ $value | quote }}
+  {{- end }}
+  WELLSPRING_LISTEN_ADDR: ":8080"
+  WELLSPRING_METRICS_ADDR: ":9090"
+  WELLSPRING_DB_PATH: /data/wellspring.db
+  WELLSPRING_PRIVATE_KEY_FILE: /var/run/wellspring/signer/private-key
+  {{- if include "wellspring.captchaSecret" . }}
+  WELLSPRING_CAPTCHA_SECRET_FILE: /var/run/wellspring/captcha/secret
+  {{- end }}

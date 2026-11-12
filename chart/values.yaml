@@ -1,0 +1,93 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/sei-protocol/wellspring
+  # Defaults to the chart's appVersion, which is the image it was published
+  # with, pinned by digest. digest pins any other tag.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# The Secret holding the hex signer key. The chart never creates it, so the key
+# stays wherever the cluster keeps its secrets.
+signer:
+  existingSecret: wellspring-signer
+  key: private-key
+
+# The captcha secret, read from an existing Secret. Required unless
+# config.captcha-provider is none.
+captcha:
+  existingSecret: ""
+  key: secret
+
+# wellspring flags, by name without the leading dashes, written to the chart's
+# ConfigMap as WELLSPRING_* variables. Values are strings, so quote numbers:
+# Helm reads an unquoted one as a float and would render 1e+18. rpc-url and chain-id are required; see
+# `wellspring --help` for the rest. The chart sets listen-addr, metrics-addr,
+# db-path, private-key-file and captcha-secret-file itself.
+config: {}
+#   rpc-url: http://fullnode:8545
+#   chain-id: "713715"
+#   captcha-provider: turnstile
+#   captcha-site-key: 0x4AAAAAAA...
+
+# Holds the SQLite claim database. Losing it forgets cooldowns and unsettled
+# claims, so keep it across upgrades. Without existingClaim, the StatefulSet
+# creates the claim and keeps it on uninstall; its size cannot change later.
+persistence:
+  existingClaim: ""
+  storageClassName: ""
+  size: 1Gi
+
+serviceAccount:
+  create: true
+  # Defaults to the full name when empty.
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+# Leaves the sender time to settle sent claims after SIGTERM.
+terminationGracePeriodSeconds: 60
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+service:
+  port: 80
+
+# Routes the page and API through the Gateway API. The metrics port is never
+# routed.
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs: []
+  hostnames: []
+
+# Scrapes the metrics port with a Prometheus Operator ServiceMonitor.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: ""
+
+# Admits traffic to the HTTP port from anywhere and to the metrics port only
+# from namespaces matching metricsNamespaceSelector; left empty, the metrics
+# port admits nothing. egress, when set, also
+# restricts outbound traffic to those rules; the pod needs DNS, the RPC and the
+# captcha provider.
+networkPolicy:
+  enabled: true
+  metricsNamespaceSelector: {}
+  egress: []
