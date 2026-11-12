@@ -2,13 +2,29 @@
 const $ = (id) => document.getElementById(id);
 let info, widget, token = "", polling = 0;
 const sei = (wei) => (Number(BigInt(wei) / 10n ** 14n) / 1e4).toString();
-const show = (text) => { $("status").textContent = text; };
+function show(text, kind = "info", hash = "") {
+  const el = $("status");
+  el.textContent = text;
+  el.dataset.kind = kind;
+  if (hash) {
+    const h = document.createElement("span");
+    h.className = "mono";
+    h.textContent = hash;
+    el.appendChild(h);
+  }
+}
 
 async function load() {
   info = await (await fetch("/api/info")).json();
   document.title = `${info.chainName} faucet`;
   $("title").textContent = `${info.chainName} faucet`;
-  $("meta").textContent = `${sei(info.amountWei)} SEI per address every ${info.addressCooldownSeconds / 3600}h · chain ${info.chainId} · faucet ${info.faucetAddress}`;
+  $("network").textContent = info.chainName;
+  $("amount").textContent = `${sei(info.amountWei)} SEI`;
+  $("cooldown").textContent = `1 claim per address every ${info.addressCooldownSeconds / 3600}h`;
+  $("chain").textContent = info.chainId;
+  $("faucet").textContent = info.faucetAddress;
+  $("details").hidden = false;
+  $("add").textContent = `Add ${info.chainName} to wallet`;
   $("add").hidden = !info.publicRpcUrl;
   const src = {
     turnstile: "https://challenges.cloudflare.com/turnstile/v0/api.js",
@@ -50,10 +66,10 @@ $("form").onsubmit = async (e) => {
     });
     const body = await r.json();
     if (id !== polling) return;
-    if (!r.ok) { show(body.message || body.error); return; }
+    if (!r.ok) { show(body.message || body.error, "error"); return; }
     poll(id, body.id);
   } catch {
-    if (id === polling) show("Faucet unreachable, try again shortly");
+    if (id === polling) show("Faucet unreachable, try again shortly", "error");
   } finally {
     resetCaptcha();
   }
@@ -64,10 +80,13 @@ async function poll(id, claim) {
     try {
       const r = await fetch(`/api/claims/${encodeURIComponent(claim)}`);
       if (id !== polling) return;
-      if (r.status === 404) { show("Claim not found"); return; }
+      if (r.status === 404) { show("Claim not found", "error"); return; }
       if (r.ok) {
         const c = await r.json();
-        show(`Status: ${c.status}` + (c.txHash ? `\nTx: ${c.txHash}` : "") + (c.error ? `\n${c.error}` : ""));
+        const kind = { confirmed: "ok", failed: "error" }[c.status] || "info";
+        const text = { queued: "Queued, sending shortly…", sent: "Sent, waiting for confirmation…",
+          confirmed: `Sent ${sei(c.amountWei)} SEI`, failed: `Failed: ${c.error}` }[c.status] || `Status: ${c.status}`;
+        show(text, kind, c.txHash ? `Tx ${c.txHash}` : "");
         if (c.status === "confirmed" || c.status === "failed") return;
       }
     } catch {
@@ -78,7 +97,7 @@ async function poll(id, claim) {
 }
 
 $("add").onclick = async () => {
-  if (!window.ethereum) { show("No browser wallet found"); return; }
+  if (!window.ethereum) { show("No browser wallet found", "error"); return; }
   await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
     chainId: "0x" + Number(info.chainId).toString(16),
     chainName: info.chainName,
