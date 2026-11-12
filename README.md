@@ -2,6 +2,10 @@
 
 :fountain: SEI testnet faucet for EVM chains, Giga first.
 
+> [!WARNING]
+> **Experimental, work in progress.** wellspring is not deployed yet, and its
+> API, configuration and storage may change without notice.
+
 wellspring hands out testnet SEI on a Sei EVM chain. One process owns one
 signing key and its nonce, so every transfer is signed and sent in order, and a
 claim counts as paid only once its receipt succeeds.
