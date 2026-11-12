@@ -28,7 +28,6 @@ import (
 
 const (
 	balanceInterval = 15 * time.Second
-	nonceSettle     = 2 * time.Second
 	shutdownTimeout = 20 * time.Second
 )
 
@@ -86,7 +85,6 @@ func run(ctx context.Context, cfg *config.Config) error {
 		BatchSize:      cfg.BatchSize,
 		Interval:       cfg.BatchInterval,
 		ConfirmTimeout: cfg.ConfirmTimeout,
-		Settle:         nonceSettle,
 	}, client, st, reg)
 	srv := api.New(cfg, st, client, snd, api.NewVerifier(cfg.CaptchaProvider, cfg.CaptchaSecret), reg)
 
