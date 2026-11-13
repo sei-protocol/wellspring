@@ -14,7 +14,7 @@ cast nonce --block pending $FAUCET --rpc-url $RPC
 ```
 
 Never run a second copy of the faucet with the same key, and never force-delete
-its pod: two senders sign the same nonces and pay claims twice.
+its pod: two senders then sign competing transactions for the same nonces.
 
 ## WellspringDown
 
