@@ -82,6 +82,15 @@ serviceMonitor:
   labels: {}
   interval: ""
 
+# Alerts for the metrics the ServiceMonitor scrapes. WellspringNotReady needs
+# kube-state-metrics. lowBalanceSEI should sit above config.min-faucet-balance-wei
+# so the alert fires before /readyz does.
+prometheusRule:
+  enabled: false
+  labels: {}
+  lowBalanceSEI: 5000
+  runbookURL: https://github.com/sei-protocol/wellspring/blob/main/RUNBOOK.md
+
 # Admits traffic to the HTTP port from anywhere and to the metrics port only
 # from namespaces matching metricsNamespaceSelector; left empty, the metrics
 # port admits nothing. egress, when set, also

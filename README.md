@@ -102,4 +102,5 @@ helm install wellspring oci://ghcr.io/sei-protocol/charts/wellspring --version <
 `config` takes any flag by name as a string, such as `config.amount-wei`. Set
 `config.trust-proxy-hops` to the number of proxies in front, or every claim
 counts against the proxy's IP. See `chart/values.yaml` for the HTTPRoute,
-ServiceMonitor and NetworkPolicy settings.
+ServiceMonitor, PrometheusRule and NetworkPolicy settings, and
+[RUNBOOK.md](RUNBOOK.md) for what to do when an alert fires.

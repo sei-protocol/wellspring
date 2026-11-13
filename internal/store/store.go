@@ -174,6 +174,13 @@ func (s *Store) CountQueued(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// OldestUnsettled returns when the oldest queued or sent claim was made, if any is.
+func (s *Store) OldestUnsettled(ctx context.Context) (time.Time, bool, error) {
+	var oldest sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT MIN(created_at) FROM claims WHERE status IN (?, ?)`, StatusQueued, StatusSent).Scan(&oldest)
+	return time.UnixMilli(oldest.Int64), oldest.Valid, err
+}
+
 // MarkSent records a queued claim's signed transaction. Call it before
 // broadcasting, so a restart can reconcile the transaction.
 func (s *Store) MarkSent(ctx context.Context, id string, nonce uint64, hash common.Hash, raw []byte, now time.Time) error {
