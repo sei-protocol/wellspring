@@ -39,11 +39,11 @@ spec:
             summary: "The faucet holds {{`{{ $value | humanize }}`}} SEI, below {{ .Values.prometheusRule.lowBalanceSEI }} SEI."
             runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringbalancelow
         - alert: WellspringSenderStuck
-          expr: wellspring_queue_depth{ {{- $target -}} } > 0 unless on (namespace, pod) sum by (namespace, pod) (increase(wellspring_claims_finished_total{ {{- $target -}} }[10m])) > 0
-          for: 10m
+          expr: wellspring_oldest_unsettled_claim_seconds{ {{- $target -}} } > 600
+          for: 5m
           labels: {severity: critical}
           annotations:
-            summary: Claims are queued but none has finished in 10 minutes.
+            summary: A claim has waited more than 10 minutes to be sent or confirmed.
             runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringsenderstuck
         - alert: WellspringSendErrors
           expr: increase(wellspring_send_errors_total{ {{- $target -}} }[15m]) > 5 or increase(wellspring_nonce_resyncs_total{ {{- $target -}} }[15m]) > 5

@@ -41,17 +41,18 @@ expected, look at `wellspring_claim_requests_total` by outcome before lowering
 
 ## WellspringSenderStuck
 
-Claims are queued but none is finishing. In the logs, look for send or receipt
-errors. Compare the pending and latest nonces:
+A claim has been queued or sent for over 10 minutes without confirming. The
+sender already rebroadcasts unconfirmed transfers and resyncs its nonce every
+`--confirm-timeout`, so restarting it repeats what has already failed. Look
+for send or receipt errors in the logs and compare the pending and latest
+nonces:
 
 - **Pending is above latest and not moving:** the node holds the faucet's
   transactions but is not including them. Check that the chain is producing
   blocks. The sender has no same-nonce fee bump yet, so a transaction priced
   below what the chain now accepts stays stuck until the chain accepts it.
-- **Pending equals latest:** the node dropped the transactions. Restart the
-  pod with `kubectl -n $NS rollout restart sts/<release>-wellspring`: on start
-  it reconciles every unsettled claim against the chain and rebroadcasts the
-  signed ones that did not land.
+- **Pending equals latest:** the node keeps dropping the transactions, and the
+  rebroadcast errors in the logs say why. See WellspringSendErrors.
 - **The log says "faucet nonce spent by a transaction it did not send":**
   something else is signing with the faucet key. Stop the faucet
   (`kubectl -n $NS scale sts/<release>-wellspring --replicas=0`) and rotate
@@ -71,21 +72,31 @@ NetworkPolicy egress rules, if set. The sender retries on its own.
 
 ## Rotating the signer key
 
-1. Generate a key (`cast wallet new`) and fund its address.
-2. Wait for `wellspring_queue_depth` to reach 0, then scale the StatefulSet
-   to 0 replicas.
-3. Replace the key in the signer secret, then scale back to 1.
-4. Move what is left on the old address to the new one, and stop using the
-   old key.
+The sender resyncs a new key against its stored in-flight claims, so no claim
+may be queued or sent when the key changes.
 
-Claims that were signed but not settled when the faucet stopped are
-rebroadcast with the old key's signature on the next start, so finish step 4
-only after they settle.
+1. Generate a key (`cast wallet new`) and fund its address.
+2. Stop new claims by disabling the HTTPRoute, then wait for
+   `wellspring_oldest_unsettled_claim_seconds` to read 0.
+3. Scale the StatefulSet to 0 replicas, replace the key in the signer secret,
+   and scale back to 1.
+4. Re-enable the HTTPRoute, and move what is left on the old address to the
+   new one.
 
 ## Restoring the database
 
-The database only holds rate limits and claim history; funds and nonces live
-on the chain. Restore `/data` from a volume snapshot with the pod scaled to 0.
-Without a backup, start from an empty volume: the sender reads its nonce from
-the chain, previous claimants can claim again at once, and unsettled claims
-are lost and must be claimed again.
+The database holds the send queue as well as rate limits and claim history;
+funds and nonces live on the chain. A claim that was queued or sent in a
+snapshot may have been paid after it was taken, and the faucet would pay it
+again. So with the pod scaled to 0, restore `/data` from a volume snapshot,
+then fail every unsettled claim before starting the faucet. The image has no
+shell, so run this from a pod with `sqlite3` that mounts the volume:
+
+```bash
+sqlite3 /data/wellspring.db \
+  "UPDATE claims SET status = 'failed', error = 'restored from a backup' WHERE status IN ('queued', 'sent')"
+```
+
+A failed claim does not count against its address or IP, so those users can
+claim again. Without a backup, start from an empty volume: the sender reads its
+nonce from the chain, and every address can claim again at once.

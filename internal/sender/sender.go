@@ -56,7 +56,10 @@ type metrics struct {
 	txsSent, sendErrors, resyncs, rpcErrors prometheus.Counter
 	claimsDone                              *prometheus.CounterVec
 	claimTime                               prometheus.Histogram
-	balance, queueDepth, nextNonce          prometheus.Gauge
+	queueDepth, oldestUnsettled, nextNonce  prometheus.Gauge
+	// balance has no series until the first balance read, so an RPC that is
+	// down from the start does not report an empty faucet.
+	balance *prometheus.GaugeVec
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
@@ -70,9 +73,12 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		claimTime: f.NewHistogram(prometheus.HistogramOpts{
 			Name: "wellspring_claim_seconds", Help: "Time from claim to confirmed transfer.", Buckets: prometheus.ExponentialBuckets(0.25, 2, 10),
 		}),
-		balance:    f.NewGauge(prometheus.GaugeOpts{Name: "wellspring_balance_wei", Help: "Faucet balance in wei."}),
+		balance:    f.NewGaugeVec(prometheus.GaugeOpts{Name: "wellspring_balance_wei", Help: "Faucet balance in wei."}, nil),
 		queueDepth: f.NewGauge(prometheus.GaugeOpts{Name: "wellspring_queue_depth", Help: "Claims waiting to be sent."}),
-		nextNonce:  f.NewGauge(prometheus.GaugeOpts{Name: "wellspring_next_nonce", Help: "Nonce the next transfer is signed with."}),
+		oldestUnsettled: f.NewGauge(prometheus.GaugeOpts{
+			Name: "wellspring_oldest_unsettled_claim_seconds", Help: "Age of the oldest queued or sent claim, 0 if none.",
+		}),
+		nextNonce: f.NewGauge(prometheus.GaugeOpts{Name: "wellspring_next_nonce", Help: "Nonce the next transfer is signed with."}),
 	}
 }
 
@@ -133,6 +139,7 @@ func (s *Sender) Run(ctx context.Context) error {
 }
 
 func (s *Sender) step(ctx context.Context) {
+	defer s.updateGauges(ctx)
 	if s.needResync {
 		if err := s.resync(ctx); err != nil {
 			s.metrics.rpcErrors.Inc()
@@ -146,8 +153,18 @@ func (s *Sender) step(ctx context.Context) {
 	if err := s.confirm(ctx); err != nil {
 		slog.Warn("confirm failed", "err", err)
 	}
+}
+
+func (s *Sender) updateGauges(ctx context.Context) {
 	if n, err := s.store.CountQueued(ctx); err == nil {
 		s.metrics.queueDepth.Set(float64(n))
+	}
+	if oldest, ok, err := s.store.OldestUnsettled(ctx); err == nil {
+		age := 0.0
+		if ok {
+			age = time.Since(oldest).Seconds()
+		}
+		s.metrics.oldestUnsettled.Set(age)
 	}
 }
 
@@ -335,7 +352,7 @@ func (s *Sender) WatchBalance(ctx context.Context, interval time.Duration) error
 			s.balance, s.balanceTime = balance, time.Now()
 			s.mu.Unlock()
 			f, _ := new(big.Float).SetInt(balance).Float64()
-			s.metrics.balance.Set(f)
+			s.metrics.balance.WithLabelValues().Set(f)
 		}
 		select {
 		case <-time.After(interval):

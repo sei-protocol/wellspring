@@ -103,6 +103,9 @@ func TestLifecyclePersists(t *testing.T) {
 	if n, err := s.CountQueued(ctx); err != nil || n != 1 {
 		t.Fatalf("count queued: %d %v", n, err)
 	}
+	if oldest, ok, err := s.OldestUnsettled(ctx); err != nil || !ok || !oldest.Equal(time.UnixMilli(t0.UnixMilli())) {
+		t.Fatalf("oldest unsettled: %v %v %v", oldest, ok, err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}

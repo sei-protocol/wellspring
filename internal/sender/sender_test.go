@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/sei-protocol/wellspring/internal/store"
 )
@@ -274,4 +275,48 @@ func TestRefusedRebroadcastKeepsResyncing(t *testing.T) {
 	}
 	h.drain(s)
 	h.paidOnce(addrs...)
+}
+
+func TestGaugesTrackUnsettledClaimsAndBalance(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, _, err := h.store.CreateClaim(ctx, common.BigToAddress(big.NewInt(1)), "ip", amount,
+		store.Limits{AddressCooldown: time.Hour, IPWindow: time.Hour, IPLimit: 1, MaxQueued: 1}, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	s := New(h.cfg, h.chain, h.store, reg)
+	s.step(ctx) // sent, not yet mined
+	if age := gauge(t, reg, "wellspring_oldest_unsettled_claim_seconds"); age < time.Hour.Seconds() {
+		t.Fatalf("oldest unsettled %vs while a claim is sent, want at least an hour", age)
+	}
+	h.drain(s)
+	if age := gauge(t, reg, "wellspring_oldest_unsettled_claim_seconds"); age != 0 {
+		t.Fatalf("oldest unsettled %vs with every claim settled", age)
+	}
+	if families := gather(t, reg); families["wellspring_balance_wei"] != nil {
+		t.Fatal("balance exported before it was read")
+	}
+}
+
+func gather(t *testing.T, reg *prometheus.Registry) map[string]*dto.MetricFamily {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*dto.MetricFamily{}
+	for _, f := range families {
+		byName[f.GetName()] = f
+	}
+	return byName
+}
+
+func gauge(t *testing.T, reg *prometheus.Registry, name string) float64 {
+	t.Helper()
+	f := gather(t, reg)[name]
+	if f == nil {
+		t.Fatalf("%s not exported", name)
+	}
+	return f.GetMetric()[0].GetGauge().GetValue()
 }
