@@ -1,0 +1,61 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- if not .Values.serviceMonitor.enabled }}
+{{- fail "prometheusRule.enabled needs serviceMonitor.enabled" }}
+{{- end }}
+{{- $target := printf "namespace=%q, service=%q" .Release.Namespace (include "wellspring.fullname" .) }}
+{{- $pod := printf "namespace=%q, pod=~%q" .Release.Namespace (printf "%s-[0-9]+" (include "wellspring.fullname" .)) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "wellspring.fullname" . }}
+  labels:
+    {{- include "wellspring.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: wellspring
+      rules:
+        - alert: WellspringDown
+          expr: up{ {{- $target -}} } == 0 or absent(up{ {{- $target -}} })
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: The faucet's metrics endpoint has been unreachable for 5 minutes.
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringdown
+        - alert: WellspringNotReady
+          expr: kube_pod_status_ready{ {{- $pod -}}, condition="true"} == 0
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "/readyz has failed for 10 minutes: the RPC is unreachable or the balance is below --min-faucet-balance-wei."
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringnotready
+        - alert: WellspringBalanceLow
+          expr: wellspring_balance_wei{ {{- $target -}} } / 1e18 < {{ .Values.prometheusRule.lowBalanceSEI }}
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: "The faucet holds {{`{{ $value | humanize }}`}} SEI, below {{ .Values.prometheusRule.lowBalanceSEI }} SEI."
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringbalancelow
+        - alert: WellspringSenderStuck
+          expr: wellspring_queue_depth{ {{- $target -}} } > 0 unless on (namespace, pod) sum by (namespace, pod) (increase(wellspring_claims_finished_total{ {{- $target -}} }[10m])) > 0
+          for: 10m
+          labels: {severity: critical}
+          annotations:
+            summary: Claims are queued but none has finished in 10 minutes.
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringsenderstuck
+        - alert: WellspringSendErrors
+          expr: increase(wellspring_send_errors_total{ {{- $target -}} }[15m]) > 5 or increase(wellspring_nonce_resyncs_total{ {{- $target -}} }[15m]) > 5
+          labels: {severity: warning}
+          annotations:
+            summary: The node is refusing transfers or the sender keeps resyncing its nonce.
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringsenderrors
+        - alert: WellspringRPCErrors
+          expr: rate(wellspring_rpc_errors_total{ {{- $target -}} }[10m]) > 0.1
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: More than one RPC read in ten seconds is failing.
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringrpcerrors
+{{- end }}

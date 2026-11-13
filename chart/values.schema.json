@@ -112,6 +112,16 @@
         "interval": { "type": "string" }
       }
     },
+    "prometheusRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "labels": { "$ref": "#/definitions/strings" },
+        "lowBalanceSEI": { "type": "number", "exclusiveMinimum": 0 },
+        "runbookURL": { "type": "string", "pattern": "^https://" }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
