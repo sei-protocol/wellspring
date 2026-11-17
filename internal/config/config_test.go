@@ -42,7 +42,7 @@ func valid(t *testing.T, extra ...string) []string {
 	t.Helper()
 	return append([]string{
 		"--rpc-url", "http://localhost:8545",
-		"--chain-id", "713715",
+		"--chain-id", "1330",
 		"--private-key-file", writeFile(t, "0x"+testKey+"\n"),
 		"--captcha-provider", "none",
 	}, extra...)
@@ -57,7 +57,7 @@ func TestDefaults(t *testing.T) {
 	if crypto.PubkeyToAddress(cfg.PrivateKey.PublicKey) != crypto.PubkeyToAddress(k.PublicKey) {
 		t.Fatal("wrong signer key")
 	}
-	if cfg.ChainID != 713715 || cfg.ListenAddr != ":8080" || cfg.LogLevel != slog.LevelInfo ||
+	if cfg.ChainID != 1330 || cfg.ListenAddr != ":8080" || cfg.LogLevel != slog.LevelInfo ||
 		cfg.Amount.String() != "1000000000000000000" || cfg.AddressCooldown != 24*time.Hour ||
 		cfg.IPLimit != 5 || cfg.ChainName != "Sei testnet" || cfg.GasFeeCap.String() != "10000000000" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
@@ -66,7 +66,7 @@ func TestDefaults(t *testing.T) {
 
 func TestEnvironment(t *testing.T) {
 	t.Setenv(EnvVar("rpc-url"), "http://rpc:8545")
-	t.Setenv(EnvVar("chain-id"), "713715")
+	t.Setenv(EnvVar("chain-id"), "1330")
 	t.Setenv(EnvVar("private-key-file"), writeFile(t, testKey))
 	t.Setenv(EnvVar("captcha-provider"), "turnstile")
 	t.Setenv(EnvVar("captcha-site-key"), "site")

@@ -30,7 +30,7 @@ captcha:
 # db-path, private-key-file and captcha-secret-file itself.
 config: {}
 #   rpc-url: http://fullnode:8545
-#   chain-id: "713715"
+#   chain-id: "1330"
 #   captcha-provider: turnstile
 #   captcha-site-key: 0x4AAAAAAA...
 
