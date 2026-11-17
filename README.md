@@ -2,9 +2,9 @@
 
 :fountain: SEI testnet faucet for EVM chains, Giga first.
 
-> [!WARNING]
-> **Experimental, work in progress.** wellspring is not deployed yet, and its
-> API, configuration and storage may change without notice.
+It runs at https://faucet.giga-testnet-1.platform.sei.io for the Giga testnet
+`giga-testnet-1` (EVM chain ID 1330, RPC https://rpc.giga-testnet-1.platform.sei.io).
+Its API, configuration and storage may still change without notice.
 
 wellspring hands out testnet SEI on a Sei EVM chain. One process owns one
 signing key and its nonce, so every transfer is signed and sent in order, and a
@@ -69,7 +69,7 @@ there:
 docker build -t wellspring .
 docker run --read-only -v wellspring-data:/data -v ./secrets:/secrets:ro \
   --add-host=host.docker.internal:host-gateway \
-  -e WELLSPRING_RPC_URL=http://host.docker.internal:8545 -e WELLSPRING_CHAIN_ID=713715 \
+  -e WELLSPRING_RPC_URL=http://host.docker.internal:8545 -e WELLSPRING_CHAIN_ID=1330 \
   -e WELLSPRING_PRIVATE_KEY_FILE=/secrets/key -e WELLSPRING_CAPTCHA_PROVIDER=none \
   -p 8080:8080 -p 9090:9090 wellspring
 ```
@@ -95,7 +95,7 @@ yourself, then install:
 kubectl create secret generic wellspring-signer --from-file=private-key=./key
 kubectl create secret generic wellspring-captcha --from-file=secret=./captcha-secret
 helm install wellspring oci://ghcr.io/sei-protocol/charts/wellspring --version <version> \
-  --set config.rpc-url=http://fullnode:8545 --set-string config.chain-id=713715 \
+  --set config.rpc-url=http://fullnode:8545 --set-string config.chain-id=1330 \
   --set config.captcha-site-key=<site key> --set captcha.existingSecret=wellspring-captcha
 ```
 

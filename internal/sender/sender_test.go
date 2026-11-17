@@ -39,7 +39,7 @@ type chain struct {
 
 func newChain() *chain {
 	return &chain{
-		signer:   types.LatestSignerForChainID(big.NewInt(713715)),
+		signer:   types.LatestSignerForChainID(big.NewInt(1330)),
 		receipts: map[common.Hash]*types.Receipt{},
 		paid:     map[common.Address]int{},
 		rejected: map[common.Address]bool{},
@@ -127,7 +127,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = st.Close() })
 	key, _ := crypto.GenerateKey()
 	return &harness{t: t, chain: newChain(), store: st, cfg: Config{
-		ChainID:        big.NewInt(713715),
+		ChainID:        big.NewInt(1330),
 		Key:            key,
 		GasTipCap:      big.NewInt(1),
 		GasFeeCap:      big.NewInt(2),

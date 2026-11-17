@@ -68,7 +68,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := &config.Config{
-		ChainID: 713715, ChainName: "Giga testnet",
+		ChainID: 1330, ChainName: "Giga testnet",
 		Amount: sei(1), MaxRecipientBalance: sei(10), MinFaucetBalance: sei(100),
 		AddressCooldown: 24 * time.Hour, IPWindow: 24 * time.Hour, IPLimit: 2, MaxQueued: 100,
 		CaptchaProvider: "turnstile", CaptchaSiteKey: "site",

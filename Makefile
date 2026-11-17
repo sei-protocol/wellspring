@@ -27,7 +27,7 @@ check-lint-pin:
 	@grep -q "version: v$(GOLANGCI_VERSION)$$" .github/workflows/ci.yml || \
 		{ echo "golangci-lint pin in .github/workflows/ci.yml differs from v$(GOLANGCI_VERSION)"; exit 1; }
 
-CHART_REQUIRED := --set config.rpc-url=http://rpc:8545 --set-string config.chain-id=713715 --set captcha.existingSecret=captcha
+CHART_REQUIRED := --set config.rpc-url=http://rpc:8545 --set-string config.chain-id=1330 --set captcha.existingSecret=captcha
 CHART_ALL := $(CHART_REQUIRED) --set httpRoute.enabled=true --set 'httpRoute.hostnames[0]=faucet.example.com' \
 	--set 'httpRoute.parentRefs[0].name=gateway' --set serviceMonitor.enabled=true --set prometheusRule.enabled=true
 
@@ -35,5 +35,5 @@ CHART_ALL := $(CHART_REQUIRED) --set httpRoute.enabled=true --set 'httpRoute.hos
 chart-lint:
 	helm lint chart --strict $(CHART_REQUIRED)
 	helm template wellspring chart $(CHART_ALL) > /dev/null
-	helm template wellspring chart --set config.rpc-url=http://rpc:8545 --set-string config.chain-id=713715 \
+	helm template wellspring chart --set config.rpc-url=http://rpc:8545 --set-string config.chain-id=1330 \
 		--set config.captcha-provider=none > /dev/null
