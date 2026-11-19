@@ -22,8 +22,9 @@ import (
 var amount = big.NewInt(1e18)
 
 // chain mimics Giga: it admits only the sender's exact next nonce, and a
-// transfer to a rejected address lands with a failed receipt without spending
-// its nonce, so every transfer queued behind it is dropped.
+// transfer to a rejected address, or a failing transaction, lands with a failed
+// receipt without spending its nonce, so every transfer queued behind it is
+// dropped. A transaction whose fee cap is below minFee is refused.
 type chain struct {
 	signer types.Signer
 
@@ -35,6 +36,8 @@ type chain struct {
 	refuse   int
 	hang     bool
 	rejected map[common.Address]bool
+	failing  map[common.Hash]bool
+	minFee   *big.Int
 }
 
 func newChain() *chain {
@@ -43,6 +46,8 @@ func newChain() *chain {
 		receipts: map[common.Hash]*types.Receipt{},
 		paid:     map[common.Address]int{},
 		rejected: map[common.Address]bool{},
+		failing:  map[common.Hash]bool{},
+		minFee:   new(big.Int),
 	}
 }
 
@@ -66,6 +71,9 @@ func (c *chain) SendTransaction(_ context.Context, tx *types.Transaction) error 
 	if c.refuse > 0 {
 		c.refuse--
 		return errors.New("node unavailable")
+	}
+	if tx.GasFeeCap().Cmp(c.minFee) < 0 {
+		return errors.New("max fee per gas less than block base fee")
 	}
 	for _, p := range c.pending {
 		if p.Hash() == tx.Hash() {
@@ -92,7 +100,7 @@ func (c *chain) mine() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, tx := range c.pending {
-		if c.rejected[*tx.To()] {
+		if c.rejected[*tx.To()] || c.failing[tx.Hash()] {
 			c.receipts[tx.Hash()] = &types.Receipt{Status: types.ReceiptStatusFailed}
 			break
 		}
@@ -275,6 +283,58 @@ func TestRefusedRebroadcastKeepsResyncing(t *testing.T) {
 	}
 	h.drain(s)
 	h.paidOnce(addrs...)
+}
+
+// TestResignedClaimSettlesOnce restarts the faucet with a raised fee cap after
+// the node refuses a claim's transaction, and checks the claim is re-signed at
+// its nonce and paid once, whichever of its transactions lands.
+func TestResignedClaimSettlesOnce(t *testing.T) {
+	for name, refuse := range map[string]func(h *harness, old common.Hash){
+		"fee cap below base fee": func(h *harness, _ common.Hash) {
+			h.chain.drop()
+			h.chain.minFee = big.NewInt(5)
+		},
+		"old transaction lands after the re-sign": func(h *harness, _ common.Hash) {
+			h.chain.refuse = 1
+		},
+		"old transaction fails in its block": func(h *harness, old common.Hash) {
+			h.chain.failing[old] = true
+			h.chain.mine()
+			h.chain.refuse = 1
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			h := newHarness(t)
+			addrs := h.claim(1)
+			h.sender().step(ctx)
+			sent, err := h.store.InFlight(ctx)
+			if err != nil || len(sent) != 1 {
+				t.Fatalf("in flight: %v %v", sent, err)
+			}
+			refuse(h, common.HexToHash(sent[0].TxHash))
+
+			h.cfg.GasFeeCap = big.NewInt(5)
+			s := h.sender()
+			s.step(ctx)
+			hashes, err := h.store.TxHashes(ctx, sent[0].ID)
+			if err != nil || len(hashes) != 2 || hashes[0] != common.HexToHash(sent[0].TxHash) {
+				t.Fatalf("hashes after re-sign: %v %v", hashes, err)
+			}
+			if resigned, err := h.store.Get(ctx, sent[0].ID); err != nil || resigned.Nonce != sent[0].Nonce || common.HexToHash(resigned.TxHash) != hashes[1] {
+				t.Fatalf("re-signed claim: %+v %v", resigned, err)
+			}
+
+			h.drain(s)
+			h.paidOnce(addrs...)
+			if c, err := h.store.Get(ctx, sent[0].ID); err != nil || c.Status != store.StatusConfirmed {
+				t.Fatalf("claim: %+v %v", c, err)
+			}
+			if h.chain.nonce != 1 {
+				t.Fatalf("chain nonce %d, want 1", h.chain.nonce)
+			}
+		})
+	}
 }
 
 func TestGaugesTrackUnsettledClaimsAndBalance(t *testing.T) {

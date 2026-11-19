@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/url"
 	"time"
@@ -63,7 +64,9 @@ type Store struct {
 	db *sql.DB
 }
 
-const schema = `
+// migrations upgrade the schema in order. The database's user_version counts
+// those already applied. Append to the list; never edit an applied migration.
+var migrations = []string{`
 CREATE TABLE IF NOT EXISTS claims (
 	id         TEXT PRIMARY KEY,
 	address    TEXT NOT NULL,
@@ -81,7 +84,16 @@ CREATE TABLE IF NOT EXISTS claims (
 CREATE INDEX IF NOT EXISTS claims_address ON claims(address, created_at);
 CREATE INDEX IF NOT EXISTS claims_ip ON claims(ip, created_at);
 CREATE INDEX IF NOT EXISTS claims_status ON claims(status, created_at);
-`
+`, `
+CREATE TABLE claim_txs (
+	hash      TEXT PRIMARY KEY,
+	claim_id  TEXT NOT NULL REFERENCES claims(id),
+	signed_at INTEGER NOT NULL
+);
+CREATE INDEX claim_txs_claim ON claim_txs(claim_id);
+INSERT INTO claim_txs (hash, claim_id, signed_at)
+	SELECT tx_hash, id, COALESCE(sent_at, created_at) FROM claims WHERE tx_hash != '';
+`}
 
 // Open opens or creates the store at path.
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -94,11 +106,39 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	// One connection serialises every write, which makes the limit checks atomic.
 	db.SetMaxOpenConns(1)
-	if _, err := db.ExecContext(ctx, schema); err != nil {
+	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func migrate(ctx context.Context, db *sql.DB) error {
+	var version int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	for ; version < len(migrations); version++ {
+		if err := applyMigration(ctx, db, version); err != nil {
+			return fmt.Errorf("migration %d: %w", version+1, err)
+		}
+	}
+	return nil
+}
+
+func applyMigration(ctx context.Context, db *sql.DB, version int) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, migrations[version]); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, version+1)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Close closes the store.
@@ -184,8 +224,48 @@ func (s *Store) OldestUnsettled(ctx context.Context) (time.Time, bool, error) {
 // MarkSent records a queued claim's signed transaction. Call it before
 // broadcasting, so a restart can reconcile the transaction.
 func (s *Store) MarkSent(ctx context.Context, id string, nonce uint64, hash common.Hash, raw []byte, now time.Time) error {
-	return s.update(ctx, StatusQueued, `status = ?, nonce = ?, tx_hash = ?, raw_tx = ?, sent_at = ?`,
-		id, StatusSent, int64(nonce), hash.Hex(), raw, now.UnixMilli()) //nolint:gosec // nonces stay far below 2^63
+	return s.sign(ctx, StatusQueued, id, hash, now, `status = ?, nonce = ?, tx_hash = ?, raw_tx = ?, sent_at = ?`,
+		StatusSent, int64(nonce), hash.Hex(), raw, now.UnixMilli()) //nolint:gosec // nonces stay far below 2^63
+}
+
+// Resign replaces a sent claim's transaction with one re-signed at the same
+// nonce, keeping the earlier hashes in TxHashes. Call it before broadcasting.
+func (s *Store) Resign(ctx context.Context, id string, hash common.Hash, raw []byte, now time.Time) error {
+	return s.sign(ctx, StatusSent, id, hash, now, `tx_hash = ?, raw_tx = ?`, hash.Hex(), raw)
+}
+
+// TxHashes returns every transaction hash signed for a claim, oldest first.
+func (s *Store) TxHashes(ctx context.Context, id string) ([]common.Hash, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT hash FROM claim_txs WHERE claim_id = ? ORDER BY rowid`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []common.Hash
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		out = append(out, common.HexToHash(hash))
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) sign(ctx context.Context, from Status, id string, hash common.Hash, now time.Time, set string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := update(ctx, tx, from, set, id, args...); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO claim_txs (hash, claim_id, signed_at) VALUES (?, ?, ?)`,
+		hash.Hex(), id, now.UnixMilli()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Finish records a sent claim's final status.
@@ -193,14 +273,18 @@ func (s *Store) Finish(ctx context.Context, id string, status Status, errMsg str
 	if status != StatusConfirmed && status != StatusFailed {
 		return ErrWrongStatus
 	}
-	return s.update(ctx, StatusSent, `status = ?, error = ?, done_at = ?`, id, status, errMsg, now.UnixMilli())
+	return update(ctx, s.db, StatusSent, `status = ?, error = ?, done_at = ?`, id, status, errMsg, now.UnixMilli())
 }
 
 // ErrWrongStatus is returned for a transition the claim's status does not allow.
 var ErrWrongStatus = errors.New("claim is not in the expected status")
 
-func (s *Store) update(ctx context.Context, from Status, set, id string, args ...any) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE claims SET `+set+` WHERE id = ? AND status = ?`, append(args, id, from)...) //nolint:gosec // set is a constant from this file
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func update(ctx context.Context, db execer, from Status, set, id string, args ...any) error {
+	res, err := db.ExecContext(ctx, `UPDATE claims SET `+set+` WHERE id = ? AND status = ?`, append(args, id, from)...) //nolint:gosec // set is a constant from this file
 	if err != nil {
 		return err
 	}

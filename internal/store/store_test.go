@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math/big"
 	"path/filepath"
@@ -131,6 +132,70 @@ func TestLifecyclePersists(t *testing.T) {
 	}
 	if c, err := s.Get(ctx, "missing"); err != nil || c != nil {
 		t.Fatalf("missing claim: %v %v", c, err)
+	}
+}
+
+func TestResignKeepsEveryHash(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	c := claim(t, s, alice, "1.1.1.1", limits, t0)
+	if err := s.Resign(ctx, c.ID, common.Hash{1}, []byte{1}, t0); !errors.Is(err, ErrWrongStatus) {
+		t.Fatalf("Resign of a queued claim: %v", err)
+	}
+	if err := s.MarkSent(ctx, c.ID, 7, common.Hash{1}, []byte{1}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Resign(ctx, c.ID, common.Hash{2}, []byte{2}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Get(ctx, c.ID); err != nil || got.Nonce.Int64 != 7 || got.TxHash != (common.Hash{2}).Hex() || string(got.RawTx) != "\x02" {
+		t.Fatalf("re-signed claim: %+v %v", got, err)
+	}
+	if hashes, err := s.TxHashes(ctx, c.ID); err != nil || len(hashes) != 2 || hashes[0] != (common.Hash{1}) || hashes[1] != (common.Hash{2}) {
+		t.Fatalf("hashes: %v %v", hashes, err)
+	}
+	if err := s.Finish(ctx, c.ID, StatusConfirmed, "", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Resign(ctx, c.ID, common.Hash{3}, []byte{3}, t0); !errors.Is(err, ErrWrongStatus) {
+		t.Fatalf("Resign of a confirmed claim: %v", err)
+	}
+}
+
+func TestMigrationKeepsSentHashes(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "wellspring.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, migrations[0]); err != nil {
+		t.Fatal(err)
+	}
+	hash := common.HexToHash("0xabc")
+	if _, err := db.ExecContext(ctx, `INSERT INTO claims (id, address, ip, amount, status, nonce, tx_hash, created_at, sent_at)
+		VALUES ('sent', ?, '1.1.1.1', '1', ?, 0, ?, 1, 2), ('queued', ?, '2.2.2.2', '1', ?, NULL, '', 1, NULL)`,
+		alice.Hex(), StatusSent, hash.Hex(), bob.Hex(), StatusQueued); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		s, err := Open(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hashes, err := s.TxHashes(ctx, "sent"); err != nil || len(hashes) != 1 || hashes[0] != hash {
+			t.Fatalf("sent claim hashes: %v %v", hashes, err)
+		}
+		if hashes, err := s.TxHashes(ctx, "queued"); err != nil || len(hashes) != 0 {
+			t.Fatalf("queued claim hashes: %v %v", hashes, err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
