@@ -145,14 +145,22 @@ func TestResignKeepsEveryHash(t *testing.T) {
 	if err := s.MarkSent(ctx, c.ID, 7, common.Hash{1}, []byte{1}, t0); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Resign(ctx, c.ID, common.Hash{2}, []byte{2}, t0); err != nil {
+	t1 := t0.Add(time.Hour)
+	if err := s.Resign(ctx, c.ID, common.Hash{2}, []byte{2}, t1); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Get(ctx, c.ID); err != nil || got.Nonce.Int64 != 7 || got.TxHash != (common.Hash{2}).Hex() || string(got.RawTx) != "\x02" {
+	if got, err := s.Get(ctx, c.ID); err != nil || got.Nonce.Int64 != 7 || got.TxHash != (common.Hash{2}).Hex() || string(got.RawTx) != "\x02" || !got.SentAt.Time.Equal(t1) {
 		t.Fatalf("re-signed claim: %+v %v", got, err)
+	}
+	if err := s.Resign(ctx, c.ID, common.Hash{1}, []byte{1}, t1); err != nil {
+		t.Fatalf("re-sign back to an earlier hash: %v", err)
 	}
 	if hashes, err := s.TxHashes(ctx, c.ID); err != nil || len(hashes) != 2 || hashes[0] != (common.Hash{1}) || hashes[1] != (common.Hash{2}) {
 		t.Fatalf("hashes: %v %v", hashes, err)
+	}
+	other := claim(t, s, bob, "2.2.2.2", limits, t0)
+	if err := s.MarkSent(ctx, other.ID, 8, common.Hash{1}, []byte{1}, t0); !errors.Is(err, ErrHashTaken) {
+		t.Fatalf("MarkSent with another claim's hash: %v", err)
 	}
 	if err := s.Finish(ctx, c.ID, StatusConfirmed, "", t0); err != nil {
 		t.Fatal(err)

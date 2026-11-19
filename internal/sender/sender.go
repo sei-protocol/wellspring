@@ -16,6 +16,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -217,6 +218,13 @@ func (s *Sender) confirm(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if receipt.Status != types.ReceiptStatusSuccessful {
+			// On Giga a failed receipt leaves the nonce unspent, and an earlier
+			// transaction for the claim can still land at it. Resync spends the
+			// nonce and reconcile settles the claim.
+			s.needResync = true
+			continue
+		}
 		if err := s.settle(ctx, c, receipt); err != nil {
 			return err
 		}
@@ -224,20 +232,19 @@ func (s *Sender) confirm(ctx context.Context) error {
 	return nil
 }
 
-// settle finishes a claim from its receipt. On Giga a failed receipt leaves
-// its nonce unspent, so every transfer signed after it needs a resync.
+// settle finishes a claim from its receipt. A failed receipt settles a claim
+// only once its nonce is spent.
 func (s *Sender) settle(ctx context.Context, c *store.Claim, receipt *types.Receipt) error {
 	if receipt.Status == types.ReceiptStatusSuccessful {
 		s.metrics.claimTime.Observe(time.Since(c.CreatedAt).Seconds())
 		return s.finish(ctx, c, store.StatusConfirmed, "")
 	}
-	s.needResync = true
 	return s.finish(ctx, c, store.StatusFailed, "transfer rejected by the chain")
 }
 
 // resync settles the sent claims below the committed nonce and rebroadcasts
-// the rest at the nonces they were signed at. A nonce no sent claim holds,
-// left by a claim whose transfer was rejected, is filled with a zero-value
+// the rest at the nonces they were signed at. A nonce no sent claim holds, or
+// one whose claim's latest transfer was rejected, is filled with a zero-value
 // transfer to the faucet so the transfers after it can land.
 func (s *Sender) resync(ctx context.Context) error {
 	committed, err := s.rpc.NonceAt(ctx, s.from, nil)
@@ -262,7 +269,15 @@ func (s *Sender) resync(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := s.rebroadcast(ctx, c); err != nil {
+		receipt, err := s.receipt(ctx, c, false)
+		if err != nil && !errors.Is(err, ethereum.NotFound) {
+			return err
+		}
+		if receipt != nil && receipt.Status != types.ReceiptStatusSuccessful {
+			if err := s.fill(ctx, nonce); err != nil {
+				return err
+			}
+		} else if err := s.rebroadcast(ctx, c); err != nil {
 			s.metrics.sendErrors.Inc()
 			stuck = true
 			slog.Warn("rebroadcast refused", "claim", c.ID, "nonce", nonce, "err", err)
@@ -314,15 +329,17 @@ func (s *Sender) rebroadcast(ctx context.Context, c *store.Claim) error {
 	return nil
 }
 
-// receipt returns the receipt that settles a claim, or ethereum.NotFound. A
-// successful receipt for any transaction signed for the claim settles it. A
-// failed one settles it only for the latest transaction or once the nonce is
-// spent: on Giga a failed receipt leaves the nonce unspent, so a later
-// re-signed transaction can still land.
+// receipt returns a successful receipt for any transaction signed for a
+// claim, else a failed receipt for its latest transaction, or for any of them
+// once the nonce is spent, else ethereum.NotFound.
 func (s *Sender) receipt(ctx context.Context, c *store.Claim, spent bool) (*types.Receipt, error) {
 	hashes, err := s.store.TxHashes(ctx, c.ID)
 	if err != nil {
 		return nil, err
+	}
+	latest := common.HexToHash(c.TxHash)
+	if !slices.Contains(hashes, latest) {
+		hashes = append(hashes, latest)
 	}
 	var failed *types.Receipt
 	for _, hash := range hashes {
@@ -334,7 +351,7 @@ func (s *Sender) receipt(ctx context.Context, c *store.Claim, spent bool) (*type
 			return nil, err
 		case receipt.Status == types.ReceiptStatusSuccessful:
 			return receipt, nil
-		case spent || hash == common.HexToHash(c.TxHash):
+		case spent || hash == latest:
 			failed = receipt
 		}
 	}

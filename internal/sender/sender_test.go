@@ -2,6 +2,7 @@ package sender
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math/big"
 	"path/filepath"
@@ -22,9 +23,9 @@ import (
 var amount = big.NewInt(1e18)
 
 // chain mimics Giga: it admits only the sender's exact next nonce, and a
-// transfer to a rejected address, or a failing transaction, lands with a failed
-// receipt without spending its nonce, so every transfer queued behind it is
-// dropped. A transaction whose fee cap is below minFee is refused.
+// transfer to a rejected address lands with a failed receipt without spending
+// its nonce, so every transfer queued behind it is dropped. A transaction whose
+// fee cap is below minFee is refused.
 type chain struct {
 	signer types.Signer
 
@@ -36,7 +37,6 @@ type chain struct {
 	refuse   int
 	hang     bool
 	rejected map[common.Address]bool
-	failing  map[common.Hash]bool
 	minFee   *big.Int
 }
 
@@ -46,7 +46,6 @@ func newChain() *chain {
 		receipts: map[common.Hash]*types.Receipt{},
 		paid:     map[common.Address]int{},
 		rejected: map[common.Address]bool{},
-		failing:  map[common.Hash]bool{},
 		minFee:   new(big.Int),
 	}
 }
@@ -100,7 +99,7 @@ func (c *chain) mine() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, tx := range c.pending {
-		if c.rejected[*tx.To()] || c.failing[tx.Hash()] {
+		if c.rejected[*tx.To()] {
 			c.receipts[tx.Hash()] = &types.Receipt{Status: types.ReceiptStatusFailed}
 			break
 		}
@@ -123,18 +122,20 @@ type harness struct {
 	t     *testing.T
 	chain *chain
 	store *store.Store
+	path  string
 	cfg   Config
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "wellspring.db"))
+	path := filepath.Join(t.TempDir(), "wellspring.db")
+	st, err := store.Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	key, _ := crypto.GenerateKey()
-	return &harness{t: t, chain: newChain(), store: st, cfg: Config{
+	return &harness{t: t, chain: newChain(), store: st, path: path, cfg: Config{
 		ChainID:        big.NewInt(1330),
 		Key:            key,
 		GasTipCap:      big.NewInt(1),
@@ -289,18 +290,31 @@ func TestRefusedRebroadcastKeepsResyncing(t *testing.T) {
 // the node refuses a claim's transaction, and checks the claim is re-signed at
 // its nonce and paid once, whichever of its transactions lands.
 func TestResignedClaimSettlesOnce(t *testing.T) {
-	for name, refuse := range map[string]func(h *harness, old common.Hash){
-		"fee cap below base fee": func(h *harness, _ common.Hash) {
+	for name, tc := range map[string]struct {
+		refuse      func(h *harness, old common.Hash)
+		afterResign func(h *harness, hashes []common.Hash)
+	}{
+		"fee cap below base fee": {refuse: func(h *harness, _ common.Hash) {
 			h.chain.drop()
 			h.chain.minFee = big.NewInt(5)
-		},
-		"old transaction lands after the re-sign": func(h *harness, _ common.Hash) {
+		}},
+		"old transaction lands after the re-sign": {refuse: func(h *harness, _ common.Hash) {
 			h.chain.refuse = 1
+		}},
+		"old transaction fails after the re-sign": {
+			refuse: func(h *harness, _ common.Hash) {
+				h.chain.drop()
+				h.chain.refuse = 1
+			},
+			afterResign: func(h *harness, hashes []common.Hash) {
+				h.chain.receipts[hashes[0]] = &types.Receipt{Status: types.ReceiptStatusFailed}
+			},
 		},
-		"old transaction fails in its block": func(h *harness, old common.Hash) {
-			h.chain.failing[old] = true
-			h.chain.mine()
-			h.chain.refuse = 1
+		"re-signed transaction fails before the old one lands": {
+			refuse: func(h *harness, _ common.Hash) { h.chain.refuse = 1 },
+			afterResign: func(h *harness, hashes []common.Hash) {
+				h.chain.receipts[hashes[1]] = &types.Receipt{Status: types.ReceiptStatusFailed}
+			},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -312,7 +326,7 @@ func TestResignedClaimSettlesOnce(t *testing.T) {
 			if err != nil || len(sent) != 1 {
 				t.Fatalf("in flight: %v %v", sent, err)
 			}
-			refuse(h, common.HexToHash(sent[0].TxHash))
+			tc.refuse(h, common.HexToHash(sent[0].TxHash))
 
 			h.cfg.GasFeeCap = big.NewInt(5)
 			s := h.sender()
@@ -323,6 +337,9 @@ func TestResignedClaimSettlesOnce(t *testing.T) {
 			}
 			if resigned, err := h.store.Get(ctx, sent[0].ID); err != nil || resigned.Nonce != sent[0].Nonce || common.HexToHash(resigned.TxHash) != hashes[1] {
 				t.Fatalf("re-signed claim: %+v %v", resigned, err)
+			}
+			if tc.afterResign != nil {
+				tc.afterResign(h, hashes)
 			}
 
 			h.drain(s)
@@ -335,6 +352,24 @@ func TestResignedClaimSettlesOnce(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSettlesClaimWithoutHashHistory covers a claim sent by a binary that
+// predates claim_txs, after a rollback past the migration.
+func TestSettlesClaimWithoutHashHistory(t *testing.T) {
+	h := newHarness(t)
+	addrs := h.claim(1)
+	h.sender().step(context.Background())
+	db, err := sql.Open("sqlite", h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(context.Background(), `DELETE FROM claim_txs`); err != nil {
+		t.Fatal(err)
+	}
+	h.drain(h.sender())
+	h.paidOnce(addrs...)
 }
 
 func TestGaugesTrackUnsettledClaimsAndBalance(t *testing.T) {

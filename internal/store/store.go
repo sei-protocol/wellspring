@@ -229,12 +229,17 @@ func (s *Store) MarkSent(ctx context.Context, id string, nonce uint64, hash comm
 }
 
 // Resign replaces a sent claim's transaction with one re-signed at the same
-// nonce, keeping the earlier hashes in TxHashes. Call it before broadcasting.
+// nonce, keeping the earlier hashes in TxHashes, and restarts its sent time.
+// Call it before broadcasting.
 func (s *Store) Resign(ctx context.Context, id string, hash common.Hash, raw []byte, now time.Time) error {
-	return s.sign(ctx, StatusSent, id, hash, now, `tx_hash = ?, raw_tx = ?`, hash.Hex(), raw)
+	return s.sign(ctx, StatusSent, id, hash, now, `tx_hash = ?, raw_tx = ?, sent_at = ?`, hash.Hex(), raw, now.UnixMilli())
 }
 
-// TxHashes returns every transaction hash signed for a claim, oldest first.
+// ErrHashTaken is returned for a transaction hash already signed for another claim.
+var ErrHashTaken = errors.New("transaction hash belongs to another claim")
+
+// TxHashes returns every transaction hash signed for a claim, in the order
+// they were first signed.
 func (s *Store) TxHashes(ctx context.Context, id string) ([]common.Hash, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT hash FROM claim_txs WHERE claim_id = ? ORDER BY rowid`, id)
 	if err != nil {
@@ -261,9 +266,18 @@ func (s *Store) sign(ctx context.Context, from Status, id string, hash common.Ha
 	if err := update(ctx, tx, from, set, id, args...); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO claim_txs (hash, claim_id, signed_at) VALUES (?, ?, ?)`,
-		hash.Hex(), id, now.UnixMilli()); err != nil {
+	// Signing is deterministic, so fees changed back to earlier values sign a
+	// hash the claim already has.
+	res, err := tx.ExecContext(ctx, `INSERT INTO claim_txs (hash, claim_id, signed_at) VALUES (?, ?, ?)
+		ON CONFLICT (hash) DO UPDATE SET signed_at = excluded.signed_at WHERE claim_id = excluded.claim_id`,
+		hash.Hex(), id, now.UnixMilli())
+	if err != nil {
 		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ErrHashTaken
 	}
 	return tx.Commit()
 }
