@@ -49,8 +49,9 @@ nonces:
 
 - **Pending is above latest and not moving:** the node holds the faucet's
   transactions but is not including them. Check that the chain is producing
-  blocks. The sender has no same-nonce fee bump yet, so a transaction priced
-  below what the chain now accepts stays stuck until the chain accepts it.
+  blocks. If the node refuses them as priced too low, raise
+  `config.gas-fee-cap-wei`: on its next resync the sender re-signs each refused
+  transfer at the same nonce with the new fees.
 - **Pending equals latest:** the node keeps dropping the transactions, and the
   rebroadcast errors in the logs say why. See WellspringSendErrors.
 - **The log says "faucet nonce spent by a transaction it did not send":**

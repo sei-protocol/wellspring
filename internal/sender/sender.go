@@ -6,6 +6,8 @@
 // was signed at until its receipt settles it: after any doubt the sender
 // rebroadcasts the same transactions rather than re-signing claims at new
 // nonces, which could pay a claim twice if its first transaction still lands.
+// A transaction the node refuses is re-signed at the same nonce with the
+// current fees; only one of them can land, and a receipt for any settles it.
 package sender
 
 import (
@@ -14,6 +16,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -175,19 +178,7 @@ func (s *Sender) dispatch(ctx context.Context) error {
 		return err
 	}
 	for _, c := range claims {
-		tx, err := types.SignNewTx(s.cfg.Key, s.signer, &types.DynamicFeeTx{
-			ChainID:   s.cfg.ChainID,
-			Nonce:     s.nonce,
-			GasTipCap: s.cfg.GasTipCap,
-			GasFeeCap: s.cfg.GasFeeCap,
-			Gas:       transferGas,
-			To:        &c.Address,
-			Value:     c.Amount,
-		})
-		if err != nil {
-			return err
-		}
-		raw, err := tx.MarshalBinary()
+		tx, raw, err := s.sign(s.nonce, c.Address, c.Amount)
 		if err != nil {
 			return err
 		}
@@ -217,7 +208,7 @@ func (s *Sender) confirm(ctx context.Context) error {
 		return err
 	}
 	for _, c := range claims {
-		receipt, err := s.rpc.TransactionReceipt(ctx, common.HexToHash(c.TxHash))
+		receipt, err := s.receipt(ctx, c, false)
 		if errors.Is(err, ethereum.NotFound) {
 			if time.Since(c.SentAt.Time) > s.cfg.ConfirmTimeout && time.Since(s.resyncedAt) > s.cfg.ConfirmTimeout {
 				s.needResync = true
@@ -225,8 +216,14 @@ func (s *Sender) confirm(ctx context.Context) error {
 			continue
 		}
 		if err != nil {
-			s.metrics.rpcErrors.Inc()
 			return err
+		}
+		if receipt.Status != types.ReceiptStatusSuccessful {
+			// On Giga a failed receipt leaves the nonce unspent, and an earlier
+			// transaction for the claim can still land at it. Resync spends the
+			// nonce and reconcile settles the claim.
+			s.needResync = true
+			continue
 		}
 		if err := s.settle(ctx, c, receipt); err != nil {
 			return err
@@ -235,20 +232,19 @@ func (s *Sender) confirm(ctx context.Context) error {
 	return nil
 }
 
-// settle finishes a claim from its receipt. On Giga a failed receipt leaves
-// its nonce unspent, so every transfer signed after it needs a resync.
+// settle finishes a claim from its receipt. A failed receipt settles a claim
+// only once its nonce is spent.
 func (s *Sender) settle(ctx context.Context, c *store.Claim, receipt *types.Receipt) error {
 	if receipt.Status == types.ReceiptStatusSuccessful {
 		s.metrics.claimTime.Observe(time.Since(c.CreatedAt).Seconds())
 		return s.finish(ctx, c, store.StatusConfirmed, "")
 	}
-	s.needResync = true
 	return s.finish(ctx, c, store.StatusFailed, "transfer rejected by the chain")
 }
 
 // resync settles the sent claims below the committed nonce and rebroadcasts
-// the rest at the nonces they were signed at. A nonce no sent claim holds,
-// left by a claim whose transfer was rejected, is filled with a zero-value
+// the rest at the nonces they were signed at. A nonce no sent claim holds, or
+// one whose claim's latest transfer was rejected, is filled with a zero-value
 // transfer to the faucet so the transfers after it can land.
 func (s *Sender) resync(ctx context.Context) error {
 	committed, err := s.rpc.NonceAt(ctx, s.from, nil)
@@ -273,11 +269,15 @@ func (s *Sender) resync(ctx context.Context) error {
 				return err
 			}
 		}
-		var tx types.Transaction
-		if err := tx.UnmarshalBinary(c.RawTx); err != nil {
+		receipt, err := s.receipt(ctx, c, false)
+		if err != nil && !errors.Is(err, ethereum.NotFound) {
 			return err
 		}
-		if err := s.rpc.SendTransaction(ctx, &tx); err != nil && !alreadyHave(err) {
+		if receipt != nil && receipt.Status != types.ReceiptStatusSuccessful {
+			if err := s.fill(ctx, nonce); err != nil {
+				return err
+			}
+		} else if err := s.rebroadcast(ctx, c); err != nil {
 			s.metrics.sendErrors.Inc()
 			stuck = true
 			slog.Warn("rebroadcast refused", "claim", c.ID, "nonce", nonce, "err", err)
@@ -300,9 +300,70 @@ func alreadyHave(err error) bool {
 	return strings.Contains(msg, "already known") || strings.Contains(msg, "already imported") || strings.Contains(msg, "nonce too low")
 }
 
+// rebroadcast resends a claim's stored transaction. If the node refuses it,
+// the claim is re-signed at the same nonce with the current fees, persisted,
+// and the new transaction sent instead.
+func (s *Sender) rebroadcast(ctx context.Context, c *store.Claim) error {
+	var old types.Transaction
+	if err := old.UnmarshalBinary(c.RawTx); err != nil {
+		return err
+	}
+	refused := s.rpc.SendTransaction(ctx, &old)
+	if refused == nil || alreadyHave(refused) {
+		return nil
+	}
+	tx, raw, err := s.sign(old.Nonce(), c.Address, c.Amount)
+	if err != nil {
+		return err
+	}
+	if tx.Hash() == old.Hash() {
+		return refused
+	}
+	if err := s.store.Resign(ctx, c.ID, tx.Hash(), raw, time.Now()); err != nil {
+		return err
+	}
+	slog.Info("re-signed refused transaction", "claim", c.ID, "nonce", tx.Nonce(), "old", old.Hash(), "new", tx.Hash(), "refused", refused)
+	if err := s.rpc.SendTransaction(ctx, tx); err != nil && !alreadyHave(err) {
+		return err
+	}
+	return nil
+}
+
+// receipt returns a successful receipt for any transaction signed for a
+// claim, else a failed receipt for its latest transaction, or for any of them
+// once the nonce is spent, else ethereum.NotFound.
+func (s *Sender) receipt(ctx context.Context, c *store.Claim, spent bool) (*types.Receipt, error) {
+	hashes, err := s.store.TxHashes(ctx, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	latest := common.HexToHash(c.TxHash)
+	if !slices.Contains(hashes, latest) {
+		hashes = append(hashes, latest)
+	}
+	var failed *types.Receipt
+	for _, hash := range hashes {
+		receipt, err := s.rpc.TransactionReceipt(ctx, hash)
+		switch {
+		case errors.Is(err, ethereum.NotFound):
+		case err != nil:
+			s.metrics.rpcErrors.Inc()
+			return nil, err
+		case receipt.Status == types.ReceiptStatusSuccessful:
+			return receipt, nil
+		case spent || hash == latest:
+			failed = receipt
+		}
+	}
+	if failed == nil {
+		return nil, ethereum.NotFound
+	}
+	return failed, nil
+}
+
 // reconcile settles a sent claim whose nonce the chain has already spent.
 func (s *Sender) reconcile(ctx context.Context, c *store.Claim) error {
-	receipt, err := s.rpc.TransactionReceipt(ctx, common.HexToHash(c.TxHash))
+	receipt, err := s.receipt(ctx, c, true)
 	switch {
 	case errors.Is(err, ethereum.NotFound):
 		if time.Since(c.SentAt.Time) <= s.cfg.ConfirmTimeout {
@@ -317,23 +378,36 @@ func (s *Sender) reconcile(ctx context.Context, c *store.Claim) error {
 	}
 }
 
-// fill spends nonce with a zero-value transfer to the faucet. Filling the same
-// nonce again signs the identical transaction.
-func (s *Sender) fill(ctx context.Context, nonce uint64) error {
+// sign signs a transfer at nonce with the current fees.
+func (s *Sender) sign(nonce uint64, to common.Address, value *big.Int) (*types.Transaction, []byte, error) {
 	tx, err := types.SignNewTx(s.cfg.Key, s.signer, &types.DynamicFeeTx{
 		ChainID:   s.cfg.ChainID,
 		Nonce:     nonce,
 		GasTipCap: s.cfg.GasTipCap,
 		GasFeeCap: s.cfg.GasFeeCap,
 		Gas:       transferGas,
-		To:        &s.from,
-		Value:     new(big.Int),
+		To:        &to,
+		Value:     value,
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	raw, err := tx.MarshalBinary()
+	return tx, raw, err
+}
+
+// fill spends nonce with a zero-value transfer to the faucet. Filling the same
+// nonce again signs the identical transaction.
+func (s *Sender) fill(ctx context.Context, nonce uint64) error {
+	tx, _, err := s.sign(nonce, s.from, new(big.Int))
 	if err != nil {
 		return err
 	}
 	slog.Warn("filling unspent nonce", "nonce", nonce)
-	return s.rpc.SendTransaction(ctx, tx)
+	if err := s.rpc.SendTransaction(ctx, tx); err != nil && !alreadyHave(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *Sender) finish(ctx context.Context, c *store.Claim, status store.Status, msg string) error {
