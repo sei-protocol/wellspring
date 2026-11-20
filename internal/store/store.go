@@ -263,6 +263,13 @@ func (s *Store) sign(ctx context.Context, from Status, id string, hash common.Ha
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// A binary from before claim_txs may have sent the claim without recording
+	// its hash, so keep the hash being replaced.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO claim_txs (hash, claim_id, signed_at)
+		SELECT tx_hash, id, COALESCE(sent_at, created_at) FROM claims WHERE id = ? AND tx_hash != ''
+		ON CONFLICT (hash) DO NOTHING`, id); err != nil {
+		return err
+	}
 	if err := update(ctx, tx, from, set, id, args...); err != nil {
 		return err
 	}

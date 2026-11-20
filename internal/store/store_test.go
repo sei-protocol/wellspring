@@ -170,6 +170,25 @@ func TestResignKeepsEveryHash(t *testing.T) {
 	}
 }
 
+func TestResignKeepsHashSentWithoutHistory(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	c := claim(t, s, alice, "1.1.1.1", limits, t0)
+	if err := s.MarkSent(ctx, c.ID, 7, common.Hash{1}, []byte{1}, t0); err != nil {
+		t.Fatal(err)
+	}
+	// As if sent by a binary from before claim_txs.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM claim_txs`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Resign(ctx, c.ID, common.Hash{2}, []byte{2}, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if hashes, err := s.TxHashes(ctx, c.ID); err != nil || len(hashes) != 2 || hashes[0] != (common.Hash{1}) || hashes[1] != (common.Hash{2}) {
+		t.Fatalf("hashes: %v %v", hashes, err)
+	}
+}
+
 func TestMigrationKeepsSentHashes(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "wellspring.db")
