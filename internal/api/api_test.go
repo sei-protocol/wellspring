@@ -229,7 +229,11 @@ func TestPage(t *testing.T) {
 		!strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("index: %d %v", w.Code, w.Header())
 	}
-	for path, kind := range map[string]string{"/app.js": "javascript", "/app.css": "css", "/sei.svg": "svg"} {
+	for path, kind := range map[string]string{
+		"/app.js": "javascript", "/app.css": "css", "/sei.svg": "svg",
+		"/lateral-regular.woff2": "font/woff2", "/lateral-bold.woff2": "font/woff2",
+		"/items-text.woff2": "font/woff2", "/repro-mono.woff2": "font/woff2",
+	} {
 		if w := h.do("GET", path, ""); w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), kind) {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Header().Get("Content-Type"))
 		}

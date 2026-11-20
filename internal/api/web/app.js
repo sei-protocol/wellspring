@@ -49,14 +49,19 @@ function busy(on) {
 
 function validate() {
   const v = $("address").value.trim();
-  $("field").dataset.state = !v ? "" : ADDRESS.test(v) ? "valid" : "invalid";
-  return ADDRESS.test(v);
+  const valid = ADDRESS.test(v);
+  const invalid = Boolean(v) && !valid;
+  $("field").dataset.state = !v ? "" : valid ? "valid" : "invalid";
+  $("address").setAttribute("aria-invalid", String(invalid));
+  $("hint").textContent = invalid ? "Enter a valid address: 0x followed by 40 hex characters."
+    : valid ? "Valid EVM address. You're ready to request SEI."
+    : "Enter an EVM address: 0x + 40 hex characters.";
+  return valid;
 }
 
 async function load() {
   info = await (await fetch("/api/info")).json();
   document.title = `${info.chainName} faucet`;
-  $("title").textContent = `${info.chainName} faucet`;
   $("network").textContent = info.chainName;
   $("amount").textContent = `${sei(info.amountWei)} SEI`;
   $("cooldown").textContent = `1 per ${info.addressCooldownSeconds / 3600}h`;
@@ -99,6 +104,8 @@ $("form").onsubmit = async (e) => {
   e.preventDefault();
   if (!validate()) {
     $("field").dataset.state = "invalid";
+    $("address").setAttribute("aria-invalid", "true");
+    $("hint").textContent = "Enter a valid address: 0x followed by 40 hex characters.";
     $("address").focus();
     show("");
     return;
