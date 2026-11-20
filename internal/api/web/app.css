@@ -28,6 +28,7 @@
   --line: #cccccc;
   --sei: #600014;
   --gold: #966f22;
+  --gold-text: #8c671f;
   --tint: #f5f5f7;
   --bad: #600014;
   --focus: #600014;
@@ -43,6 +44,7 @@
     --muted: #999999;
     --line: #333333;
     --gold: #d6c9ac;
+    --gold-text: var(--gold);
     --tint: #000000;
     --bad: #b99ba1;
     --focus: #b99ba1;
@@ -80,7 +82,7 @@ button, input { font: inherit; }
 .docs-link:hover { text-decoration: underline; text-underline-offset: 5px; }
 .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 6rem; row-gap: 5rem; align-items: start; padding: 4rem 0 2.5rem; }
 .hero { padding-top: 1rem; }
-.kicker { margin: 0 0 1.75rem; color: var(--gold); }
+.kicker { margin: 0 0 1.75rem; color: var(--gold-text); }
 .kicker span { margin-right: .6rem; }
 h1 { margin: 0 0 1.5rem; font: 700 clamp(76px, 7.8vw, 112px)/.94 var(--display); letter-spacing: -.025em; max-width: 9ch; }
 .lede { margin: 0 0 3rem; font: 21px/1.5 var(--serif); color: var(--muted); max-width: 35ch; }
@@ -142,7 +144,7 @@ dd.mono { font-size: 10px; line-height: 1.6; }
 .guide h2 { font-size: 28px; }
 .steps { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3rem; margin: 1.75rem 0 0; padding: 0; }
 .steps li { display: flex; gap: 1rem; }
-.step-number { color: var(--gold); padding-top: .2rem; }
+.step-number { color: var(--gold-text); padding-top: .2rem; }
 .steps h3 { margin: 0 0 .5rem; font-size: 16px; font-weight: 400; }
 .steps p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; max-width: 29ch; }
 footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding: 1.5rem 0; color: var(--muted); border-top: 1px solid var(--line); font-size: 10px; }
