@@ -223,6 +223,21 @@ func TestFailedReceiptFillsItsNonce(t *testing.T) {
 	}
 }
 
+func TestFillAlreadyPendingKeepsResyncing(t *testing.T) {
+	h := newHarness(t)
+	addrs := h.claim(1)
+	h.chain.rejected[addrs[0]] = true
+	s := h.sender()
+	ctx := context.Background()
+	s.step(ctx)
+	h.chain.mine()
+	for range 2 {
+		if err := s.resync(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDroppedTransactionsResend(t *testing.T) {
 	h := newHarness(t)
 	h.cfg.ConfirmTimeout = 0

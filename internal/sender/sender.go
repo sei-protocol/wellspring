@@ -404,7 +404,10 @@ func (s *Sender) fill(ctx context.Context, nonce uint64) error {
 		return err
 	}
 	slog.Warn("filling unspent nonce", "nonce", nonce)
-	return s.rpc.SendTransaction(ctx, tx)
+	if err := s.rpc.SendTransaction(ctx, tx); err != nil && !alreadyHave(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *Sender) finish(ctx context.Context, c *store.Claim, status store.Status, msg string) error {
