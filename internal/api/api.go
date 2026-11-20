@@ -77,7 +77,7 @@ func (s *Server) Handler() http.Handler {
 		r.URL.Path = "/web/"
 		static.ServeHTTP(w, r)
 	})
-	for _, name := range []string{"app.js", "app.css", "sei.svg"} {
+	for _, name := range []string{"app.js", "app.css", "sei.svg", "lateral-regular.woff2", "lateral-bold.woff2", "items-text.woff2", "repro-mono.woff2"} {
 		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = "/web/" + name
 			static.ServeHTTP(w, r)
