@@ -416,7 +416,7 @@ func TestGrantsShareTheNonceOrder(t *testing.T) {
 	big5 := new(big.Int).Mul(amount, big.NewInt(5))
 	if _, _, err := h.store.CreateGrant(context.Background(), &store.Grant{
 		Caller: "ns/sa", ID: "g", Address: granted, Request: "amount:5", Amount: big5, Reason: "r",
-	}, new(big.Int).Mul(amount, big.NewInt(100)), time.Now()); err != nil {
+	}, new(big.Int).Mul(amount, big.NewInt(100)), time.Now(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	late := common.BigToAddress(big.NewInt(9))

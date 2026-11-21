@@ -76,7 +76,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	h := &harness{
 		faucet:   &fakeFaucet{balance: sei(1000), at: time.Now()},
-		balances: &fakeBalances{held: map[common.Address]*big.Int{}},
+		balances: &fakeBalances{held: map[common.Address]*big.Int{faucetAddr: sei(1000)}},
 		captcha:  &fakeCaptcha{},
 	}
 	reg := prometheus.NewRegistry()

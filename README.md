@@ -89,9 +89,9 @@ The grants API sends any amount up to `--grant-max-wei` to an address, for
 partners, load tests and other test workloads. It listens on `--admin-addr`,
 apart from the public page, and goes through the same store, signer and nonce
 order as claims, so it never competes with them for a nonce. It skips the
-captcha, cooldowns and `--max-recipient-balance-wei`, but refuses a grant that,
-with every unsettled claim, would take the balance below
-`--min-faucet-balance-wei`.
+captcha, cooldowns and `--max-recipient-balance-wei`, but reads the faucet's
+balance afresh and refuses a grant that, with every unsettled claim, would take
+it below `--min-faucet-balance-wei`.
 
 Callers authenticate with a Kubernetes ServiceAccount token whose audience is
 `--admin-audience`. wellspring sends it to the Kubernetes TokenReview API and
@@ -105,7 +105,8 @@ Authorization: Bearer <token>
 ```
 
 Set `topUpToWei` instead of `amountWei` to send only what brings the address to
-that balance. `id` names the grant within its caller's ServiceAccount: sending
+that balance. While a transfer to the address is still settling its balance is
+not final, so a top-up gets 503 and `wellspring grant` retries it. `id` names the grant within its caller's ServiceAccount: sending
 the same request again returns the grant already made, with status 200, and
 reusing an ID for a different address or amount gets 409. A new grant answers
 202. `GET /admin/grants/{id}` reports it; `status` is `queued`, `sent`,

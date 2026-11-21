@@ -138,6 +138,7 @@ func (a *Admin) createGrant(w http.ResponseWriter, r *http.Request, caller strin
 		return
 	}
 
+	readAt := time.Now()
 	g.Amount = wei
 	if req.TopUpToWei != "" {
 		bctx, cancel := context.WithTimeout(r.Context(), rpcTimeout)
@@ -156,17 +157,21 @@ func (a *Admin) createGrant(w http.ResponseWriter, r *http.Request, caller strin
 		a.refuseGrant(w, http.StatusBadRequest, "too_large", "grant exceeds the per-grant maximum of "+a.cfg.GrantMax.String()+" wei")
 		return
 	}
-	balance, at := a.faucet.Balance()
-	if balance == nil || time.Since(at) > BalanceMaxAge {
-		a.refuseGrant(w, http.StatusServiceUnavailable, "rpc", "faucet balance unknown, try again shortly")
+	bctx, cancel := context.WithTimeout(r.Context(), rpcTimeout)
+	balance, err := a.balances.BalanceAt(bctx, a.faucet.Address(), nil)
+	cancel()
+	if err != nil {
+		a.refuseGrant(w, http.StatusServiceUnavailable, "rpc", "chain unavailable, try again shortly")
 		return
 	}
 	available := new(big.Int).Sub(balance, a.cfg.MinFaucetBalance)
 
-	created, isNew, err := a.store.CreateGrant(r.Context(), g, available, time.Now())
+	created, isNew, err := a.store.CreateGrant(r.Context(), g, available, readAt, time.Now())
 	switch {
 	case errors.Is(err, store.ErrGrantNoFunds):
 		a.refuseGrant(w, http.StatusServiceUnavailable, "no_funds", err.Error())
+	case errors.Is(err, store.ErrGrantBusy):
+		a.refuseGrant(w, http.StatusServiceUnavailable, "busy", err.Error())
 	case errors.Is(err, store.ErrGrantConflict):
 		a.refuseGrant(w, http.StatusConflict, "conflict", err.Error())
 	case err != nil:

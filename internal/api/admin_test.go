@@ -3,12 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -91,7 +91,11 @@ func TestGrantTopUp(t *testing.T) {
 	if w, v := h.grant("ns-a", grantBody("t", addr(1), "topUpToWei", sei(100).String())); w.Code != http.StatusOK || v["amountWei"] != sei(70).String() {
 		t.Fatalf("top-up retry: %d %v", w.Code, v)
 	}
-	if w, v := h.grant("ns-a", grantBody("t2", addr(1), "topUpToWei", sei(50).String())); w.Code != http.StatusOK || v["amountWei"] != "0" || v["status"] != "confirmed" {
+	if w, v := h.grant("ns-a", grantBody("t2", addr(1), "topUpToWei", sei(50).String())); w.Code != http.StatusServiceUnavailable || v["error"] != "busy" {
+		t.Fatalf("top-up while a transfer to the address is queued: %d %v", w.Code, v)
+	}
+	h.balances.held[common.HexToAddress(addr(2))] = sei(100)
+	if w, v := h.grant("ns-a", grantBody("t3", addr(2), "topUpToWei", sei(50).String())); w.Code != http.StatusOK || v["amountWei"] != "0" || v["status"] != "confirmed" {
 		t.Fatalf("top-up of a funded address: %d %v", w.Code, v)
 	}
 }
@@ -120,8 +124,8 @@ func TestGrantRefusals(t *testing.T) {
 			t.Errorf("%s: got %d, want %d: %s", name, w.Code, tc.code, w.Body)
 		}
 	}
-	h.faucet.at = time.Now().Add(-time.Hour)
-	if w, _ := h.grant("ns-a", grantBody("a", addr(1), "amountWei", "1")); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("grant with a stale faucet balance: %d", w.Code)
+	h.balances.err = errors.New("rpc down")
+	if w, v := h.grant("ns-a", grantBody("a", addr(1), "amountWei", "1")); w.Code != http.StatusServiceUnavailable || v["error"] != "rpc" {
+		t.Fatalf("grant without the faucet balance: %d %v", w.Code, v)
 	}
 }

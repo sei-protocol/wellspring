@@ -14,6 +14,7 @@ import (
 var (
 	ErrGrantConflict = errors.New("grant ID already used for a different request")
 	ErrGrantNoFunds  = errors.New("grant would take the faucet below its minimum balance")
+	ErrGrantBusy     = errors.New("a transfer to this address is still settling, try again shortly")
 )
 
 // Grant is an operator's transfer to one address. Callers name their grants,
@@ -26,8 +27,8 @@ type Grant struct {
 	Request string
 	// Amount is what is sent: zero when the recipient already held enough.
 	Amount *big.Int
-	// TopUp makes CreateGrant take what unsettled claims already send the
-	// recipient off Amount, so two top-ups in flight do not both pay.
+	// TopUp marks Amount as computed from the recipient's balance, which
+	// CreateGrant refuses to trust while a transfer to it may be missing.
 	TopUp     bool
 	Reason    string
 	CreatedAt time.Time
@@ -36,10 +37,14 @@ type Grant struct {
 }
 
 // CreateGrant stores g and queues its transfer, unless the caller already has
-// a grant with g's ID, which it returns instead with created false. A new grant
-// is refused if it, together with every unsettled claim, would spend more than
-// available.
-func (s *Store) CreateGrant(ctx context.Context, g *Grant, available *big.Int, now time.Time) (*Grant, bool, error) {
+// a grant with g's ID, which it returns instead with created false.
+//
+// available is the faucet's spendable balance and readAt is when the balances
+// behind it and a top-up's Amount began to be read. A claim confirmed since
+// then may be missing from them, so it counts as unsettled: a new grant is
+// refused if it would spend more than available together with them, and a
+// top-up while one is to its recipient.
+func (s *Store) CreateGrant(ctx context.Context, g *Grant, available *big.Int, readAt, now time.Time) (*Grant, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, err
@@ -61,17 +66,17 @@ func (s *Store) CreateGrant(ctx context.Context, g *Grant, available *big.Int, n
 	out.Amount = new(big.Int).Set(g.Amount)
 	out.CreatedAt = time.UnixMilli(now.UnixMilli())
 	if g.TopUp {
-		pending, err := unsettledWei(ctx, tx, &g.Address)
+		pending, err := unsettledWei(ctx, tx, &g.Address, readAt)
 		if err != nil {
 			return nil, false, err
 		}
-		if out.Amount.Sub(out.Amount, pending).Sign() < 0 {
-			out.Amount.SetInt64(0)
+		if pending.Sign() > 0 {
+			return nil, false, ErrGrantBusy
 		}
 	}
 	var claimID sql.NullString
 	if out.Amount.Sign() > 0 {
-		unsettled, err := unsettledWei(ctx, tx, nil)
+		unsettled, err := unsettledWei(ctx, tx, nil, readAt)
 		if err != nil {
 			return nil, false, err
 		}
@@ -138,10 +143,12 @@ func getGrant(ctx context.Context, db querier, caller, id string) (*Grant, error
 	return &g, nil
 }
 
-// unsettledWei sums the amounts of every queued or sent claim, to to if it is
-// not nil: what the faucet has promised but balances may not yet show.
-func unsettledWei(ctx context.Context, db querier, to *common.Address) (*big.Int, error) {
-	q, args := `SELECT amount FROM claims WHERE status IN (?, ?)`, []any{StatusQueued, StatusSent}
+// unsettledWei sums the amounts of every queued or sent claim, and of every
+// claim confirmed at or after since, to to if it is not nil: what the faucet
+// has promised but balances read since may not show.
+func unsettledWei(ctx context.Context, db querier, to *common.Address, since time.Time) (*big.Int, error) {
+	q := `SELECT amount FROM claims WHERE (status IN (?, ?) OR (status = ? AND done_at >= ?))`
+	args := []any{StatusQueued, StatusSent, StatusConfirmed, since.UnixMilli()}
 	if to != nil {
 		q, args = q+` AND address = ?`, append(args, to.Hex())
 	}
