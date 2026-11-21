@@ -439,9 +439,13 @@ func TestGrantsShareTheNonceOrder(t *testing.T) {
 		t.Fatalf("granted %v wei", v)
 	}
 	for _, m := range gather(t, reg)["wellspring_claims_finished_total"].GetMetric() {
-		kind := m.GetLabel()[0].GetValue()
-		if want := map[string]float64{"claim": 3, "grant": 1}[kind]; m.GetCounter().GetValue() != want {
-			t.Fatalf("%s finished %v times, want %v", kind, m.GetCounter().GetValue(), want)
+		l := map[string]string{}
+		for _, p := range m.GetLabel() {
+			l[p.GetName()] = p.GetValue()
+		}
+		want := map[string]float64{"confirmed/claim": 3, "confirmed/grant": 1}[l["status"]+"/"+l["kind"]]
+		if m.GetCounter().GetValue() != want {
+			t.Fatalf("%v finished %v times, want %v", l, m.GetCounter().GetValue(), want)
 		}
 	}
 }

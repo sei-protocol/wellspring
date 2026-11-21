@@ -23,7 +23,7 @@ func grantCommand() *cli.Command {
 		Name:  "grant",
 		Usage: "request a grant from wellspring's grants API and wait for it to confirm",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "url", Usage: "grants API base URL, e.g. http://wellspring-admin.wellspring.svc:8081", Required: true},
+			&cli.StringFlag{Name: "url", Usage: "grants API base URL, e.g. http://wellspring.wellspring.svc:8081", Required: true},
 			&cli.StringFlag{Name: "token-file", Value: "/var/run/secrets/wellspring/token", Usage: "ServiceAccount token with the wellspring audience, reread on every request", TakesFile: true},
 			&cli.StringFlag{Name: "id", Usage: "grant ID; reusing it returns the same grant", Required: true},
 			&cli.StringFlag{Name: "address", Usage: "recipient 0x address"},

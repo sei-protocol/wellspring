@@ -49,9 +49,14 @@ type Admin struct {
 
 // NewAdmin returns the grants API of s.
 func NewAdmin(s *Server, a Authenticator, reg prometheus.Registerer) *Admin {
-	return &Admin{Server: s, auth: a, grants: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+	grants := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 		Name: "wellspring_grants_total", Help: "Grant requests by outcome.",
-	}, []string{"outcome"})}
+	}, []string{"outcome"})
+	// From zero, so increase() sees the first of each.
+	for _, outcome := range []string{"created", "auth_unavailable"} {
+		grants.WithLabelValues(outcome)
+	}
+	return &Admin{Server: s, auth: a, grants: grants}
 }
 
 // Handler returns the admin HTTP handler.
@@ -120,7 +125,7 @@ func (a *Admin) createGrant(w http.ResponseWriter, r *http.Request, caller strin
 		return
 	}
 	request := kind + wei.String()
-	g := &store.Grant{Caller: caller, ID: req.ID, Address: to, Request: request, Reason: req.Reason}
+	g := &store.Grant{Caller: caller, ID: req.ID, Address: to, Request: request, Reason: req.Reason, TopUp: req.TopUpToWei != ""}
 
 	existing, err := a.store.GetGrant(r.Context(), caller, req.ID)
 	if err != nil {

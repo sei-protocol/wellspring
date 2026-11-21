@@ -25,7 +25,10 @@ type Grant struct {
 	// Request is what the caller asked for; a retry must ask for the same.
 	Request string
 	// Amount is what is sent: zero when the recipient already held enough.
-	Amount    *big.Int
+	Amount *big.Int
+	// TopUp makes CreateGrant take what unsettled claims already send the
+	// recipient off Amount, so two top-ups in flight do not both pay.
+	TopUp     bool
 	Reason    string
 	CreatedAt time.Time
 	// Claim carries the transfer; nil when Amount is zero.
@@ -57,9 +60,18 @@ func (s *Store) CreateGrant(ctx context.Context, g *Grant, available *big.Int, n
 	out := *g
 	out.Amount = new(big.Int).Set(g.Amount)
 	out.CreatedAt = time.UnixMilli(now.UnixMilli())
+	if g.TopUp {
+		pending, err := unsettledWei(ctx, tx, &g.Address)
+		if err != nil {
+			return nil, false, err
+		}
+		if out.Amount.Sub(out.Amount, pending).Sign() < 0 {
+			out.Amount.SetInt64(0)
+		}
+	}
 	var claimID sql.NullString
 	if out.Amount.Sign() > 0 {
-		unsettled, err := unsettledWei(ctx, tx)
+		unsettled, err := unsettledWei(ctx, tx, nil)
 		if err != nil {
 			return nil, false, err
 		}
@@ -126,10 +138,14 @@ func getGrant(ctx context.Context, db querier, caller, id string) (*Grant, error
 	return &g, nil
 }
 
-// unsettledWei sums the amounts of every queued or sent claim: what the faucet
-// has promised but its balance may not yet show.
-func unsettledWei(ctx context.Context, db querier) (*big.Int, error) {
-	rows, err := db.QueryContext(ctx, `SELECT amount FROM claims WHERE status IN (?, ?)`, StatusQueued, StatusSent)
+// unsettledWei sums the amounts of every queued or sent claim, to to if it is
+// not nil: what the faucet has promised but balances may not yet show.
+func unsettledWei(ctx context.Context, db querier, to *common.Address) (*big.Int, error) {
+	q, args := `SELECT amount FROM claims WHERE status IN (?, ?)`, []any{StatusQueued, StatusSent}
+	if to != nil {
+		q, args = q+` AND address = ?`, append(args, to.Hex())
+	}
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

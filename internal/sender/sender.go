@@ -68,7 +68,7 @@ type metrics struct {
 
 func newMetrics(reg prometheus.Registerer) *metrics {
 	f := promauto.With(reg)
-	return &metrics{
+	m := &metrics{
 		txsSent:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_txs_sent_total", Help: "Transfers broadcast."}),
 		sendErrors: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_send_errors_total", Help: "Broadcasts and rebroadcasts the node refused."}),
 		resyncs:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_nonce_resyncs_total", Help: "Nonce resynchronisations with the chain."}),
@@ -85,6 +85,13 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		}),
 		nextNonce: f.NewGauge(prometheus.GaugeOpts{Name: "wellspring_next_nonce", Help: "Nonce the next transfer is signed with."}),
 	}
+	// From zero, so increase() sees the first of each.
+	for _, kind := range []string{store.KindClaim, store.KindGrant} {
+		for _, status := range []store.Status{store.StatusConfirmed, store.StatusFailed} {
+			m.claimsDone.WithLabelValues(string(status), kind)
+		}
+	}
+	return m
 }
 
 // Sender drains queued claims into transfers.

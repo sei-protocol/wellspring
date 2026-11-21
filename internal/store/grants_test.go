@@ -102,3 +102,32 @@ func TestGrantsSkipPublicCooldown(t *testing.T) {
 	}
 	claim(t, s, alice, "ip", limits, t0)
 }
+
+func TestTopUpGrantCountsUnsettledTransfersToTheRecipient(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	budget := new(big.Int).Mul(one, big.NewInt(100))
+	two := new(big.Int).Mul(one, big.NewInt(2))
+	topUp := func(id string, to common.Address, amount *big.Int) *Grant {
+		g := grant(id, to, amount)
+		g.Request, g.TopUp = "top-up-to:"+amount.String(), true
+		return g
+	}
+	if _, _, err := s.CreateGrant(ctx, topUp("a", alice, two), budget, t0); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		id   string
+		to   common.Address
+		want *big.Int
+	}{
+		{"b", alice, new(big.Int)}, // the first top-up already sends it
+		{"c", bob, two},            // another recipient's transfers do not count
+	}
+	for _, c := range cases {
+		g, _, err := s.CreateGrant(ctx, topUp(c.id, c.to, two), budget, t0)
+		if err != nil || g.Amount.Cmp(c.want) != 0 || (c.want.Sign() == 0) != (g.Claim == nil) {
+			t.Fatalf("%s: %+v %v, want %s", c.id, g, err, c.want)
+		}
+	}
+}
