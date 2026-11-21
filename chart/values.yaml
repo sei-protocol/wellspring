@@ -78,8 +78,8 @@ admin:
   enabled: false
   port: 8081
   audience: wellspring
-  # namespace/serviceaccount, or namespace/* for every ServiceAccount in a
-  # namespace. The NetworkPolicy admits the admin port from these namespaces;
+  # Exact namespace/serviceaccount pairs; wildcards are refused. The
+  # NetworkPolicy admits the admin port from these entries' namespaces;
   # kubectl port-forward reaches it regardless.
   allowedServiceAccounts: []
   grantMaxWei: "100000000000000000000000"

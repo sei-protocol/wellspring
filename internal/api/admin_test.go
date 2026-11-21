@@ -51,7 +51,7 @@ func TestGrantLifecycle(t *testing.T) {
 	h := newHarness(t)
 	body := grantBody("run-1", addr(1), "amountWei", sei(400).String())
 	w, v := h.grant("ns-a", body)
-	if w.Code != http.StatusAccepted || v["status"] != "queued" || v["amountWei"] != sei(400).String() || v["caller"] != "ns-a/sa" {
+	if w.Code != http.StatusAccepted || v["status"] != "queued" || v["amountWei"] != sei(400).String() || v["caller"] != "ns-a/sa" || v["chainId"] != 1330.0 {
 		t.Fatalf("grant: %d %v", w.Code, v)
 	}
 	// Grants skip the captcha and the recipient balance cap.

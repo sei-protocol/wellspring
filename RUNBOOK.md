@@ -88,20 +88,29 @@ allow it), the projected token is missing, or the ClusterRoleBinding to
 
 ## Making a grant by hand
 
-With `grants-operator` a ServiceAccount in `admin.allowedServiceAccounts`, and
-the grant ID something that says what it is for:
+With `grants-operator` in `admin.allowedServiceAccounts`, install the CLI as in
+the README and run, with an `--id` that says what the grant is for:
 
 ```bash
-kubectl -n $NS port-forward sts/<release>-wellspring 8081
+wellspring grant --kube-context <context> --namespace $NS --service <release>-wellspring \
+  --id acme-2026-11 --to 0x… --sei 5000 --reason "Acme integration tests"
+```
+
+It mints the token and port-forwards with your `kubectl`, waits for the receipt
+and prints the transaction hash. Rerunning it with the same `--id` is safe: it
+returns the same grant. Without the CLI, the same through `curl`:
+
+```bash
+kubectl -n $NS port-forward svc/<release>-wellspring 8081
 TOKEN=$(kubectl -n $NS create token grants-operator --audience wellspring --duration 10m)
 curl -s localhost:8081/admin/grants -H "Authorization: Bearer $TOKEN" \
   -d '{"id":"acme-2026-11","address":"0x…","amountWei":"5000000000000000000000","reason":"Acme integration tests"}'
 curl -s localhost:8081/admin/grants/acme-2026-11 -H "Authorization: Bearer $TOKEN"
 ```
 
-Repeating the POST is safe: it returns the same grant. Anyone allowed to create
-tokens for an allowed ServiceAccount, or pods under it, can make grants up to
-`admin.grantMaxWei` each, so keep the allowlist short.
+Anyone allowed to create tokens for an allowed ServiceAccount, or pods under
+it, can make grants up to `admin.grantMaxWei` each. The allowlist takes only
+exact `namespace/serviceaccount` pairs, so add each caller by name.
 
 ## Rotating the signer key
 

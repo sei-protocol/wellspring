@@ -55,7 +55,7 @@ environment variable: `--rpc-url` is `WELLSPRING_RPC_URL`. Run
 | `--db-path` | `wellspring.db` | SQLite database; put it on a persistent volume |
 | `--listen-addr` / `--metrics-addr` | `:8080` / `:9090` | HTTP and Prometheus listeners |
 | `--admin-addr` | off | Grants API listener; see [Grants](#grants) |
-| `--admin-allow` | required with `--admin-addr` | Comma-separated `namespace/serviceaccount` or `namespace/*` grant callers |
+| `--admin-allow` | required with `--admin-addr` | Comma-separated `namespace/serviceaccount` grant callers; wildcards are refused |
 | `--admin-audience` | `wellspring` | Audience a caller's token must carry |
 | `--grant-max-wei` | 100000 SEI | Most one grant sends |
 | `--kube-api-url` / `--kube-token-file` / `--kube-ca-file` | in-cluster defaults | Kubernetes API that reviews callers' tokens |
@@ -95,8 +95,9 @@ it below `--min-faucet-balance-wei`.
 
 Callers authenticate with a Kubernetes ServiceAccount token whose audience is
 `--admin-audience`. wellspring sends it to the Kubernetes TokenReview API and
-accepts it only for a ServiceAccount in `--admin-allow`, so there is no shared
-secret: a human runs `kubectl create token`, and a pod mounts a projected token.
+accepts it only for a ServiceAccount named exactly in `--admin-allow`, with no
+wildcards, so there is no shared secret: a human's `wellspring grant` runs
+`kubectl create token`, and a pod mounts a projected token.
 
 ```
 POST /admin/grants
@@ -106,13 +107,40 @@ Authorization: Bearer <token>
 
 Set `topUpToWei` instead of `amountWei` to send only what brings the address to
 that balance. While a transfer to the address is still settling its balance is
-not final, so a top-up gets 503 and `wellspring grant` retries it. `id` names the grant within its caller's ServiceAccount: sending
-the same request again returns the grant already made, with status 200, and
+not final, so a top-up gets 503 and `wellspring grant` retries it. `id` names
+the grant within its caller's ServiceAccount: sending the same request again returns the grant already made, with status 200, and
 reusing an ID for a different address or amount gets 409. A new grant answers
 202. `GET /admin/grants/{id}` reports it; `status` is `queued`, `sent`,
 `confirmed` or `failed`, and only a successful receipt confirms it. Each grant
 is logged with its caller, recipient, amount and reason, and counted in
 `wellspring_grants_total` and `wellspring_granted_wei_total`.
+
+### Granting from a laptop
+
+Install the CLI with Go, from Homebrew's `go` or any Go 1.21 or later, which
+fetches the toolchain `go.mod` names:
+
+```bash
+go install github.com/sei-protocol/wellspring/cmd/wellspring@v0.2.0
+```
+
+Then, with a kubeconfig context for wellspring's cluster:
+
+```bash
+wellspring grant --kube-context <context> --to 0x… --sei 5000 --reason "Acme integration tests"
+```
+
+It runs your `kubectl`, so EKS and other exec auth plugins work as they do for
+you, to mint a short-lived `grants-operator` token for the `wellspring` audience
+and to port-forward a free local port to the Service's admin port. It waits for
+the receipt, prints the transaction hash with the chain ID and public RPC, and
+stops the port-forward. `--top-up-to-sei` tops up instead, and `--amount-wei`
+and `--top-up-to-wei` take wei. Without `--id` the grant is named
+`<address>-<amount>sei-<UTC date>`, printed, so rerunning the same command that
+day resumes it rather than paying twice; pass `--id` to name it yourself or to
+resume it on a later day. `--namespace`, `--service`, `--service-account` and
+`--admin-port` default to `wellspring`, `wellspring`, `grants-operator` and
+`8081`.
 
 ### Funding a test Job
 

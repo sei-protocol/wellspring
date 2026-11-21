@@ -126,7 +126,7 @@ func (r *Reviewer) Authenticate(ctx context.Context, token string) (string, erro
 	if !strings.HasPrefix(st.User.Username, saPrefix) || !ok || ns == "" || name == "" {
 		return "", ErrUnauthenticated
 	}
-	if !slices.Contains(r.allow, ns+"/"+name) && !slices.Contains(r.allow, ns+"/*") {
+	if !slices.Contains(r.allow, ns+"/"+name) {
 		return "", ErrForbidden
 	}
 	return ns + "/" + name, nil

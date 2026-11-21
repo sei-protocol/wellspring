@@ -47,24 +47,26 @@ func sa(user string, audiences ...string) string {
 
 func TestAuthenticate(t *testing.T) {
 	srv, dir := fakeAPI(t, map[string]string{
-		"exact":       sa("system:serviceaccount:wellspring:grants-operator", "wellspring"),
-		"wildcard":    sa("system:serviceaccount:giga-testnet-1:harpoon-setup", "wellspring"),
-		"other-sa":    sa("system:serviceaccount:wellspring:default", "wellspring"),
-		"other-aud":   sa("system:serviceaccount:wellspring:grants-operator", "https://kubernetes.default.svc"),
-		"user":        sa("alice@example.com", "wellspring"),
-		"invalid":     `{"authenticated":false,"error":"token expired"}`,
-		"unvouched":   `{"authenticated":false,"audiences":["wellspring"],"user":{"username":"system:serviceaccount:wellspring:grants-operator"}}`,
-		"no-name":     sa("system:serviceaccount:wellspring", "wellspring"),
-		"wildcard-ns": sa("system:serviceaccount:giga-testnet-10:harpoon-setup", "wellspring"),
+		"exact":     sa("system:serviceaccount:wellspring:grants-operator", "wellspring"),
+		"second":    sa("system:serviceaccount:giga-testnet-1:harpoon-setup", "wellspring"),
+		"same-ns":   sa("system:serviceaccount:giga-testnet-1:validator", "wellspring"),
+		"star":      sa("system:serviceaccount:giga-testnet-2:*", "wellspring"),
+		"other-sa":  sa("system:serviceaccount:wellspring:default", "wellspring"),
+		"other-aud": sa("system:serviceaccount:wellspring:grants-operator", "https://kubernetes.default.svc"),
+		"user":      sa("alice@example.com", "wellspring"),
+		"invalid":   `{"authenticated":false,"error":"token expired"}`,
+		"unvouched": `{"authenticated":false,"audiences":["wellspring"],"user":{"username":"system:serviceaccount:wellspring:grants-operator"}}`,
+		"no-name":   sa("system:serviceaccount:wellspring", "wellspring"),
+		"other-ns":  sa("system:serviceaccount:giga-testnet-10:harpoon-setup", "wellspring"),
 	})
 	r, err := NewReviewer(srv.URL, filepath.Join(dir, "token"), filepath.Join(dir, "ca.crt"), "wellspring",
-		[]string{"wellspring/grants-operator", "giga-testnet-1/*"})
+		[]string{"wellspring/grants-operator", "giga-testnet-1/harpoon-setup"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for token, want := range map[string]error{
-		"exact": nil, "wildcard": nil,
-		"other-sa": ErrForbidden, "wildcard-ns": ErrForbidden,
+		"exact": nil, "second": nil,
+		"other-sa": ErrForbidden, "same-ns": ErrForbidden, "other-ns": ErrForbidden, "star": ErrForbidden,
 		"other-aud": ErrUnauthenticated, "user": ErrUnauthenticated, "invalid": ErrUnauthenticated,
 		"unvouched": ErrUnauthenticated, "no-name": ErrUnauthenticated, "": ErrUnauthenticated,
 		string(make([]byte, maxTokenBytes+1)): ErrUnauthenticated,
@@ -73,21 +75,21 @@ func TestAuthenticate(t *testing.T) {
 			t.Errorf("token %.12q: got %v, want %v", token, err, want)
 		}
 	}
-	if who, _ := r.Authenticate(context.Background(), "wildcard"); who != "giga-testnet-1/harpoon-setup" {
+	if who, _ := r.Authenticate(context.Background(), "second"); who != "giga-testnet-1/harpoon-setup" {
 		t.Fatalf("caller %q", who)
 	}
 }
 
 func TestAuthenticateFailsClosed(t *testing.T) {
 	srv, dir := fakeAPI(t, nil)
-	r, err := NewReviewer(srv.URL, filepath.Join(dir, "missing"), filepath.Join(dir, "ca.crt"), "wellspring", []string{"a/*"})
+	r, err := NewReviewer(srv.URL, filepath.Join(dir, "missing"), filepath.Join(dir, "ca.crt"), "wellspring", []string{"a/b"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if who, err := r.Authenticate(context.Background(), "t"); err == nil || who != "" {
 		t.Fatal("authenticated without reading its own token")
 	}
-	untrusted, err := NewReviewer(srv.URL, filepath.Join(dir, "token"), "", "wellspring", []string{"a/*"})
+	untrusted, err := NewReviewer(srv.URL, filepath.Join(dir, "token"), "", "wellspring", []string{"a/b"})
 	if err != nil {
 		t.Fatal(err)
 	}

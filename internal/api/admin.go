@@ -187,7 +187,7 @@ func (a *Admin) createGrant(w http.ResponseWriter, r *http.Request, caller strin
 		if created.Claim == nil {
 			status = http.StatusOK
 		}
-		writeJSON(w, status, grantView(created))
+		writeJSON(w, status, a.grantView(created))
 	}
 }
 
@@ -199,7 +199,7 @@ func (a *Admin) answerExisting(w http.ResponseWriter, req, existing *store.Grant
 		return
 	}
 	a.grants.WithLabelValues("repeated").Inc()
-	writeJSON(w, http.StatusOK, grantView(existing))
+	writeJSON(w, http.StatusOK, a.grantView(existing))
 }
 
 func (a *Admin) getGrant(w http.ResponseWriter, r *http.Request, caller string) {
@@ -211,7 +211,7 @@ func (a *Admin) getGrant(w http.ResponseWriter, r *http.Request, caller string) 
 	case g == nil:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found", "message": "no such grant"})
 	default:
-		writeJSON(w, http.StatusOK, grantView(g))
+		writeJSON(w, http.StatusOK, a.grantView(g))
 	}
 }
 
@@ -220,9 +220,13 @@ func (a *Admin) refuseGrant(w http.ResponseWriter, status int, code, msg string)
 	writeJSON(w, status, map[string]string{"error": code, "message": msg})
 }
 
-// grantView reports a grant. A grant with nothing to send is confirmed at once.
-func grantView(g *store.Grant) map[string]any {
+// grantView reports a grant, with the chain to look its transfer up on. A
+// grant with nothing to send is confirmed at once.
+func (a *Admin) grantView(g *store.Grant) map[string]any {
 	v := map[string]any{
+		"chainId":   a.cfg.ChainID,
+		"chainName": a.cfg.ChainName,
+		"rpcUrl":    a.cfg.PublicRPCURL,
 		"id":        g.ID,
 		"caller":    g.Caller,
 		"address":   g.Address.Hex(),

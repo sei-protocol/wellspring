@@ -54,8 +54,7 @@ type Config struct {
 	AdminAddr string
 	// AdminAudience is the audience a caller's ServiceAccount token must carry.
 	AdminAudience string
-	// AdminAllow lists the namespace/name ServiceAccounts, or namespace/* for
-	// every one in a namespace, that may make grants.
+	// AdminAllow lists the namespace/name ServiceAccounts that may make grants.
 	AdminAllow []string
 	// GrantMax is the most one grant sends.
 	GrantMax *big.Int
@@ -74,8 +73,9 @@ type Config struct {
 
 const serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
 
-// allowEntry matches a namespace/serviceaccount or namespace/* allowlist entry.
-var allowEntry = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?/(\*|[a-z0-9]([-.a-z0-9]{0,251}[a-z0-9])?)$`)
+// allowEntry matches a namespace/serviceaccount allowlist entry. Wildcards are
+// refused: every caller is named.
+var allowEntry = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?/[a-z0-9]([-.a-z0-9]{0,251}[a-z0-9])?$`)
 
 // Flags returns wellspring's flags. Secrets are only read from files, so they
 // stay out of the process environment and the pod spec.
@@ -103,7 +103,7 @@ func Flags() []cli.Flag {
 		file("captcha-secret-file", "file holding the captcha secret"),
 		str("admin-addr", "", "grants API listen address; off when empty"),
 		str("admin-audience", "wellspring", "audience a grant caller's ServiceAccount token must carry"),
-		str("admin-allow", "", "comma-separated namespace/serviceaccount (or namespace/*) callers allowed to make grants"),
+		str("admin-allow", "", "comma-separated namespace/serviceaccount callers allowed to make grants"),
 		str("grant-max-wei", "100000000000000000000000", "most wei one grant sends"),
 		str("kube-api-url", "https://kubernetes.default.svc", "Kubernetes API that reviews grant callers' tokens"),
 		str("kube-token-file", serviceAccountDir+"/token", "token wellspring authenticates to the Kubernetes API with"),
@@ -193,7 +193,8 @@ func FromCommand(cmd *cli.Command) (*Config, error) {
 	if c.AdminAddr != "" {
 		for _, e := range strings.Split(cmd.String("admin-allow"), ",") {
 			if e = strings.TrimSpace(e); e != "" {
-				r.check(allowEntry.MatchString(e), fmt.Sprintf("--admin-allow entry %q is not namespace/serviceaccount or namespace/*", e))
+				r.check(!strings.Contains(e, "*"), fmt.Sprintf("--admin-allow entry %q is a wildcard; name each ServiceAccount as namespace/serviceaccount", e))
+				r.check(strings.Contains(e, "*") || allowEntry.MatchString(e), fmt.Sprintf("--admin-allow entry %q is not namespace/serviceaccount", e))
 				c.AdminAllow = append(c.AdminAllow, e)
 			}
 		}

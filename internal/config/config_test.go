@@ -112,9 +112,10 @@ func TestInvalid(t *testing.T) {
 		{"zero duration", []string{"--confirm-timeout", "0s"}, "--confirm-timeout must be positive"},
 		{"bad log level", []string{"--log-level", "loud"}, "--log-level"},
 		{"admin without allowlist", []string{"--admin-addr", ":8081"}, "--admin-allow is required"},
-		{"bad allowlist entry", []string{"--admin-addr", ":8081", "--admin-allow", "ns/sa,*/*"}, `"*/*" is not namespace/serviceaccount`},
-		{"admin without audience", []string{"--admin-addr", ":8081", "--admin-allow", "ns/*", "--admin-audience", ""}, "--admin-audience is required"},
-		{"zero grant max", []string{"--admin-addr", ":8081", "--admin-allow", "ns/*", "--grant-max-wei", "0"}, "--grant-max-wei must be positive"},
+		{"bad allowlist entry", []string{"--admin-addr", ":8081", "--admin-allow", "ns/sa,ns"}, `"ns" is not namespace/serviceaccount`},
+		{"wildcard allowlist entry", []string{"--admin-addr", ":8081", "--admin-allow", "ns/sa,giga-testnet-1/*"}, `"giga-testnet-1/*" is a wildcard`},
+		{"admin without audience", []string{"--admin-addr", ":8081", "--admin-allow", "ns/sa", "--admin-audience", ""}, "--admin-audience is required"},
+		{"zero grant max", []string{"--admin-addr", ":8081", "--admin-allow", "ns/sa", "--grant-max-wei", "0"}, "--grant-max-wei must be positive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := load(t, valid(t, tc.args...)...)
@@ -126,12 +127,12 @@ func TestInvalid(t *testing.T) {
 }
 
 func TestAdmin(t *testing.T) {
-	cfg, err := load(t, valid(t, "--admin-addr", ":8081", "--admin-allow", " wellspring/grants-operator, giga-testnet-1/* ")...)
+	cfg, err := load(t, valid(t, "--admin-addr", ":8081", "--admin-allow", " wellspring/grants-operator, giga-testnet-1/harpoon-setup ")...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.AdminAudience != "wellspring" || cfg.GrantMax.String() != "100000000000000000000000" ||
-		strings.Join(cfg.AdminAllow, ",") != "wellspring/grants-operator,giga-testnet-1/*" {
+		strings.Join(cfg.AdminAllow, ",") != "wellspring/grants-operator,giga-testnet-1/harpoon-setup" {
 		t.Fatalf("unexpected admin config: %+v", cfg)
 	}
 }
