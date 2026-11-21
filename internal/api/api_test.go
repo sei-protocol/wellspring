@@ -55,6 +55,7 @@ func (c *fakeCaptcha) Verify(context.Context, string, string) error { return c.e
 
 type harness struct {
 	srv      http.Handler
+	admin    http.Handler
 	faucet   *fakeFaucet
 	balances *fakeBalances
 	captcha  *fakeCaptcha
@@ -71,14 +72,16 @@ func newHarness(t *testing.T) *harness {
 		ChainID: 1330, ChainName: "Giga testnet",
 		Amount: sei(1), MaxRecipientBalance: sei(10), MinFaucetBalance: sei(100),
 		AddressCooldown: 24 * time.Hour, IPWindow: 24 * time.Hour, IPLimit: 2, MaxQueued: 100,
-		CaptchaProvider: "turnstile", CaptchaSiteKey: "site",
+		CaptchaProvider: "turnstile", CaptchaSiteKey: "site", GrantMax: sei(500),
 	}
 	h := &harness{
 		faucet:   &fakeFaucet{balance: sei(1000), at: time.Now()},
 		balances: &fakeBalances{held: map[common.Address]*big.Int{}},
 		captcha:  &fakeCaptcha{},
 	}
-	h.srv = New(cfg, st, h.balances, h.faucet, h.captcha, prometheus.NewRegistry()).Handler()
+	reg := prometheus.NewRegistry()
+	srv := New(cfg, st, h.balances, h.faucet, h.captcha, reg)
+	h.srv, h.admin = srv.Handler(), NewAdmin(srv, fakeAuth{}, reg).Handler()
 	return h
 }
 

@@ -58,4 +58,16 @@ spec:
           annotations:
             summary: More than one RPC read in ten seconds is failing.
             runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringrpcerrors
+        - alert: WellspringGrantFailed
+          expr: increase(wellspring_claims_finished_total{ {{- $target -}}, kind="grant", status="failed"}[15m]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: A grant's transfer failed; its caller sees status failed and must retry under a new grant ID.
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringgrantfailed
+        - alert: WellspringGrantAuthUnavailable
+          expr: increase(wellspring_grants_total{ {{- $target -}}, outcome="auth_unavailable"}[15m]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: wellspring cannot reach the Kubernetes API to review grant callers' tokens.
+            runbook_url: {{ .Values.prometheusRule.runbookURL }}#wellspringgrantauthunavailable
 {{- end }}

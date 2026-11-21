@@ -24,6 +24,20 @@ spec:
       ports:
         - port: metrics
     {{- end }}
+    {{- if .Values.admin.enabled }}
+    - from:
+        {{- $namespaces := list }}
+        {{- range .Values.admin.allowedServiceAccounts }}
+        {{- $namespaces = append $namespaces (splitList "/" . | first) }}
+        {{- end }}
+        {{- range $ns := $namespaces | uniq | sortAlpha }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+        {{- end }}
+      ports:
+        - port: admin
+    {{- end }}
   {{- with .Values.networkPolicy.egress }}
   egress:
     {{- toYaml . | nindent 4 }}

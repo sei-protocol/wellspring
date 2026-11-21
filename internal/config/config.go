@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,12 +50,32 @@ type Config struct {
 	CaptchaSiteKey  string
 	CaptchaSecret   string
 
+	// AdminAddr serves the grants API; empty turns it off.
+	AdminAddr string
+	// AdminAudience is the audience a caller's ServiceAccount token must carry.
+	AdminAudience string
+	// AdminAllow lists the namespace/name ServiceAccounts, or namespace/* for
+	// every one in a namespace, that may make grants.
+	AdminAllow []string
+	// GrantMax is the most one grant sends.
+	GrantMax *big.Int
+	// KubeAPIURL, KubeTokenFile and KubeCAFile reach the Kubernetes API that
+	// reviews callers' tokens.
+	KubeAPIURL    string
+	KubeTokenFile string
+	KubeCAFile    string
+
 	BatchInterval  time.Duration
 	BatchSize      int
 	GasTipCap      *big.Int
 	GasFeeCap      *big.Int
 	ConfirmTimeout time.Duration
 }
+
+const serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+// allowEntry matches a namespace/serviceaccount or namespace/* allowlist entry.
+var allowEntry = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?/(\*|[a-z0-9]([-.a-z0-9]{0,251}[a-z0-9])?)$`)
 
 // Flags returns wellspring's flags. Secrets are only read from files, so they
 // stay out of the process environment and the pod spec.
@@ -80,6 +101,13 @@ func Flags() []cli.Flag {
 		str("captcha-provider", "turnstile", "turnstile, hcaptcha, or none for local use"),
 		str("captcha-site-key", "", "public captcha site key"),
 		file("captcha-secret-file", "file holding the captcha secret"),
+		str("admin-addr", "", "grants API listen address; off when empty"),
+		str("admin-audience", "wellspring", "audience a grant caller's ServiceAccount token must carry"),
+		str("admin-allow", "", "comma-separated namespace/serviceaccount (or namespace/*) callers allowed to make grants"),
+		str("grant-max-wei", "100000000000000000000000", "most wei one grant sends"),
+		str("kube-api-url", "https://kubernetes.default.svc", "Kubernetes API that reviews grant callers' tokens"),
+		str("kube-token-file", serviceAccountDir+"/token", "token wellspring authenticates to the Kubernetes API with"),
+		str("kube-ca-file", serviceAccountDir+"/ca.crt", "CA bundle of the Kubernetes API"),
 		dur("batch-interval", 500*time.Millisecond, "how often queued claims are sent"),
 		num("batch-size", 100, "most claims sent per interval"),
 		str("gas-tip-cap-wei", "1000000000", "EIP-1559 tip cap"),
@@ -134,6 +162,12 @@ func FromCommand(cmd *cli.Command) (*Config, error) {
 		TrustProxyHops:      cmd.Int("trust-proxy-hops"),
 		CaptchaProvider:     cmd.String("captcha-provider"),
 		CaptchaSiteKey:      cmd.String("captcha-site-key"),
+		AdminAddr:           cmd.String("admin-addr"),
+		AdminAudience:       cmd.String("admin-audience"),
+		GrantMax:            r.wei("grant-max-wei"),
+		KubeAPIURL:          cmd.String("kube-api-url"),
+		KubeTokenFile:       cmd.String("kube-token-file"),
+		KubeCAFile:          cmd.String("kube-ca-file"),
 		BatchInterval:       r.positive("batch-interval"),
 		BatchSize:           cmd.Int("batch-size"),
 		GasTipCap:           r.wei("gas-tip-cap-wei"),
@@ -156,6 +190,18 @@ func FromCommand(cmd *cli.Command) (*Config, error) {
 	r.check(c.GasFeeCap == nil || c.GasTipCap == nil || c.GasFeeCap.Cmp(c.GasTipCap) >= 0, "--gas-fee-cap-wei must be at least --gas-tip-cap-wei")
 	r.check(c.IPLimit > 0 && c.MaxQueued > 0 && c.BatchSize > 0, "--ip-limit, --max-queued and --batch-size must be positive")
 	r.check(c.TrustProxyHops >= 0, "--trust-proxy-hops must not be negative")
+	if c.AdminAddr != "" {
+		for _, e := range strings.Split(cmd.String("admin-allow"), ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				r.check(allowEntry.MatchString(e), fmt.Sprintf("--admin-allow entry %q is not namespace/serviceaccount or namespace/*", e))
+				c.AdminAllow = append(c.AdminAllow, e)
+			}
+		}
+		r.check(len(c.AdminAllow) > 0, "--admin-allow is required with --admin-addr")
+		r.check(c.AdminAudience != "", "--admin-audience is required with --admin-addr")
+		r.check(c.KubeAPIURL != "", "--kube-api-url is required with --admin-addr")
+		r.check(c.GrantMax == nil || c.GrantMax.Sign() > 0, "--grant-max-wei must be positive")
+	}
 	if len(r.errs) > 0 {
 		return nil, errors.Join(r.errs...)
 	}

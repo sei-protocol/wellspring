@@ -21,6 +21,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/sei-protocol/wellspring/internal/api"
+	"github.com/sei-protocol/wellspring/internal/auth"
 	"github.com/sei-protocol/wellspring/internal/config"
 	"github.com/sei-protocol/wellspring/internal/sender"
 	"github.com/sei-protocol/wellspring/internal/store"
@@ -35,9 +36,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	cmd := &cli.Command{
-		Name:  "wellspring",
-		Usage: "testnet SEI faucet for Sei EVM chains",
-		Flags: config.Flags(),
+		Name:     "wellspring",
+		Usage:    "testnet SEI faucet for Sei EVM chains",
+		Flags:    config.Flags(),
+		Commands: []*cli.Command{grantCommand()},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			cfg, err := config.FromCommand(cmd)
 			if err != nil {
@@ -93,6 +95,14 @@ func run(ctx context.Context, cfg *config.Config) error {
 	servers := []*http.Server{
 		newServer(cfg.ListenAddr, srv.Handler()),
 		newServer(cfg.MetricsAddr, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})),
+	}
+	if cfg.AdminAddr != "" {
+		reviewer, err := auth.NewReviewer(cfg.KubeAPIURL, cfg.KubeTokenFile, cfg.KubeCAFile, cfg.AdminAudience, cfg.AdminAllow)
+		if err != nil {
+			return err
+		}
+		servers = append(servers, newServer(cfg.AdminAddr, api.NewAdmin(srv, reviewer, reg).Handler()))
+		slog.Info("grants API enabled", "listen", cfg.AdminAddr, "allow", cfg.AdminAllow)
 	}
 	errc := make(chan error, len(servers))
 	for _, s := range servers {

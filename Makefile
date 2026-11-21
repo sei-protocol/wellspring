@@ -29,7 +29,8 @@ check-lint-pin:
 
 CHART_REQUIRED := --set config.rpc-url=http://rpc:8545 --set-string config.chain-id=1330 --set captcha.existingSecret=captcha
 CHART_ALL := $(CHART_REQUIRED) --set httpRoute.enabled=true --set 'httpRoute.hostnames[0]=faucet.example.com' \
-	--set 'httpRoute.parentRefs[0].name=gateway' --set serviceMonitor.enabled=true --set prometheusRule.enabled=true
+	--set 'httpRoute.parentRefs[0].name=gateway' --set serviceMonitor.enabled=true --set prometheusRule.enabled=true \
+	--set admin.enabled=true --set 'admin.allowedServiceAccounts[0]=ns/*'
 
 # Lints the chart and renders it with every optional resource on.
 chart-lint:

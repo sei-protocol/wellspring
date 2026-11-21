@@ -58,6 +58,7 @@ type Config struct {
 type metrics struct {
 	txsSent, sendErrors, resyncs, rpcErrors prometheus.Counter
 	claimsDone                              *prometheus.CounterVec
+	grantedWei                              prometheus.Counter
 	claimTime                               prometheus.Histogram
 	queueDepth, oldestUnsettled, nextNonce  prometheus.Gauge
 	// balance has no series until the first balance read, so an RPC that is
@@ -72,7 +73,8 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		sendErrors: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_send_errors_total", Help: "Broadcasts and rebroadcasts the node refused."}),
 		resyncs:    f.NewCounter(prometheus.CounterOpts{Name: "wellspring_nonce_resyncs_total", Help: "Nonce resynchronisations with the chain."}),
 		rpcErrors:  f.NewCounter(prometheus.CounterOpts{Name: "wellspring_rpc_errors_total", Help: "Failed RPC reads."}),
-		claimsDone: f.NewCounterVec(prometheus.CounterOpts{Name: "wellspring_claims_finished_total", Help: "Claims by final status."}, []string{"status"}),
+		claimsDone: f.NewCounterVec(prometheus.CounterOpts{Name: "wellspring_claims_finished_total", Help: "Claims and grants by final status."}, []string{"status", "kind"}),
+		grantedWei: f.NewCounter(prometheus.CounterOpts{Name: "wellspring_granted_wei_total", Help: "Wei paid by confirmed grants."}),
 		claimTime: f.NewHistogram(prometheus.HistogramOpts{
 			Name: "wellspring_claim_seconds", Help: "Time from claim to confirmed transfer.", Buckets: prometheus.ExponentialBuckets(0.25, 2, 10),
 		}),
@@ -411,7 +413,11 @@ func (s *Sender) fill(ctx context.Context, nonce uint64) error {
 }
 
 func (s *Sender) finish(ctx context.Context, c *store.Claim, status store.Status, msg string) error {
-	s.metrics.claimsDone.WithLabelValues(string(status)).Inc()
+	s.metrics.claimsDone.WithLabelValues(string(status), c.Kind).Inc()
+	if c.Kind == store.KindGrant && status == store.StatusConfirmed {
+		f, _ := new(big.Float).SetInt(c.Amount).Float64()
+		s.metrics.grantedWei.Add(f)
+	}
 	return s.store.Finish(ctx, c.ID, status, msg, time.Now())
 }
 

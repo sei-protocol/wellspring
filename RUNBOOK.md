@@ -71,6 +71,38 @@ or the faucet balance cannot cover a transfer.
 RPC reads are failing. Check the node behind `config.rpc-url` and the
 NetworkPolicy egress rules, if set. The sender retries on its own.
 
+## WellspringGrantFailed
+
+A grant's transfer landed with a failed receipt, or was refused for good. The
+log line `claim failed` with the grant's claim ID gives the reason. The grant
+stays failed: its caller sees `status: failed` and must request again under a
+new grant ID. Check the faucet balance and the sender before it does.
+
+## WellspringGrantAuthUnavailable
+
+wellspring could not review a grant caller's token, so it refused the grant
+with 503. Check `kubectl -n $NS logs sts/<release>-wellspring` for `token review
+failed`: the Kubernetes API is unreachable (NetworkPolicy egress, if set, must
+allow it), the projected token is missing, or the ClusterRoleBinding to
+`system:auth-delegator` is gone.
+
+## Making a grant by hand
+
+With `grants-operator` a ServiceAccount in `admin.allowedServiceAccounts`, and
+the grant ID something that says what it is for:
+
+```bash
+kubectl -n $NS port-forward sts/<release>-wellspring 8081
+TOKEN=$(kubectl -n $NS create token grants-operator --audience wellspring --duration 10m)
+curl -s localhost:8081/admin/grants -H "Authorization: Bearer $TOKEN" \
+  -d '{"id":"acme-2026-11","address":"0x…","amountWei":"5000000000000000000000","reason":"Acme integration tests"}'
+curl -s localhost:8081/admin/grants/acme-2026-11 -H "Authorization: Bearer $TOKEN"
+```
+
+Repeating the POST is safe: it returns the same grant. Anyone allowed to create
+tokens for an allowed ServiceAccount, or pods under it, can make grants up to
+`admin.grantMaxWei` each, so keep the allowlist short.
+
 ## Rotating the signer key
 
 The sender resyncs a new key against its stored in-flight claims, so no claim

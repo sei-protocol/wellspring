@@ -111,6 +111,10 @@ func TestInvalid(t *testing.T) {
 		{"negative hops", []string{"--trust-proxy-hops", "-1"}, "must not be negative"},
 		{"zero duration", []string{"--confirm-timeout", "0s"}, "--confirm-timeout must be positive"},
 		{"bad log level", []string{"--log-level", "loud"}, "--log-level"},
+		{"admin without allowlist", []string{"--admin-addr", ":8081"}, "--admin-allow is required"},
+		{"bad allowlist entry", []string{"--admin-addr", ":8081", "--admin-allow", "ns/sa,*/*"}, `"*/*" is not namespace/serviceaccount`},
+		{"admin without audience", []string{"--admin-addr", ":8081", "--admin-allow", "ns/*", "--admin-audience", ""}, "--admin-audience is required"},
+		{"zero grant max", []string{"--admin-addr", ":8081", "--admin-allow", "ns/*", "--grant-max-wei", "0"}, "--grant-max-wei must be positive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := load(t, valid(t, tc.args...)...)
@@ -118,6 +122,17 @@ func TestInvalid(t *testing.T) {
 				t.Fatalf("err %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestAdmin(t *testing.T) {
+	cfg, err := load(t, valid(t, "--admin-addr", ":8081", "--admin-allow", " wellspring/grants-operator, giga-testnet-1/* ")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AdminAudience != "wellspring" || cfg.GrantMax.String() != "100000000000000000000000" ||
+		strings.Join(cfg.AdminAllow, ",") != "wellspring/grants-operator,giga-testnet-1/*" {
+		t.Fatalf("unexpected admin config: %+v", cfg)
 	}
 }
 

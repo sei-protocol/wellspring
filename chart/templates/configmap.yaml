@@ -12,6 +12,17 @@ data:
   WELLSPRING_METRICS_ADDR: ":9090"
   WELLSPRING_DB_PATH: /data/wellspring.db
   WELLSPRING_PRIVATE_KEY_FILE: /var/run/wellspring/signer/private-key
+  {{- with .Values.admin }}
+  {{- if .enabled }}
+  WELLSPRING_ADMIN_ADDR: ":8081"
+  WELLSPRING_ADMIN_AUDIENCE: {{ .audience | quote }}
+  {{- if not .allowedServiceAccounts }}
+  {{- fail "admin.allowedServiceAccounts is required with admin.enabled" }}
+  {{- end }}
+  WELLSPRING_ADMIN_ALLOW: {{ .allowedServiceAccounts | join "," | quote }}
+  WELLSPRING_GRANT_MAX_WEI: {{ .grantMaxWei | quote }}
+  {{- end }}
+  {{- end }}
   {{- if include "wellspring.captchaSecret" . }}
   WELLSPRING_CAPTCHA_SECRET_FILE: /var/run/wellspring/captcha/secret
   {{- end }}
