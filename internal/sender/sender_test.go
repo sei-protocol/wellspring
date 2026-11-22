@@ -409,6 +409,47 @@ func TestGaugesTrackUnsettledClaimsAndBalance(t *testing.T) {
 	}
 }
 
+func TestGrantsShareTheNonceOrder(t *testing.T) {
+	h := newHarness(t)
+	addrs := h.claim(2)
+	granted := common.HexToAddress("0x00000000000000000000000000000000000ca201")
+	big5 := new(big.Int).Mul(amount, big.NewInt(5))
+	if _, _, err := h.store.CreateGrant(context.Background(), &store.Grant{
+		Caller: "ns/sa", ID: "g", Address: granted, Request: "amount:5", Amount: big5, Reason: "r",
+	}, new(big.Int).Mul(amount, big.NewInt(100)), time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	late := common.BigToAddress(big.NewInt(9))
+	if _, _, err := h.store.CreateClaim(context.Background(), late, "ip2", amount,
+		store.Limits{AddressCooldown: time.Hour, IPWindow: time.Hour, IPLimit: 1, MaxQueued: 10}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	s := New(h.cfg, h.chain, h.store, reg)
+	h.drain(s)
+	h.paidOnce(addrs[0], addrs[1], granted, late)
+	if h.chain.nonce != 4 {
+		t.Fatalf("chain at nonce %d, want 4", h.chain.nonce)
+	}
+	g, _ := h.store.GetGrant(context.Background(), "ns/sa", "g")
+	if g.Claim.Status != store.StatusConfirmed || g.Claim.Amount.Cmp(big5) != 0 {
+		t.Fatalf("grant claim %+v", g.Claim)
+	}
+	if v := gather(t, reg)["wellspring_granted_wei_total"].GetMetric()[0].GetCounter().GetValue(); v != 5e18 {
+		t.Fatalf("granted %v wei", v)
+	}
+	for _, m := range gather(t, reg)["wellspring_claims_finished_total"].GetMetric() {
+		l := map[string]string{}
+		for _, p := range m.GetLabel() {
+			l[p.GetName()] = p.GetValue()
+		}
+		want := map[string]float64{"confirmed/claim": 3, "confirmed/grant": 1}[l["status"]+"/"+l["kind"]]
+		if m.GetCounter().GetValue() != want {
+			t.Fatalf("%v finished %v times, want %v", l, m.GetCounter().GetValue(), want)
+		}
+	}
+}
+
 func gather(t *testing.T, reg *prometheus.Registry) map[string]*dto.MetricFamily {
 	t.Helper()
 	families, err := reg.Gather()

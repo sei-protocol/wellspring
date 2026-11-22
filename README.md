@@ -54,6 +54,11 @@ environment variable: `--rpc-url` is `WELLSPRING_RPC_URL`. Run
 | `--confirm-timeout` | `30s` | Wait for a receipt before resyncing the nonce |
 | `--db-path` | `wellspring.db` | SQLite database; put it on a persistent volume |
 | `--listen-addr` / `--metrics-addr` | `:8080` / `:9090` | HTTP and Prometheus listeners |
+| `--admin-addr` | off | Grants API listener; see [Grants](#grants) |
+| `--admin-allow` | required with `--admin-addr` | Comma-separated `namespace/serviceaccount` grant callers; wildcards are refused |
+| `--admin-audience` | `wellspring` | Audience a caller's token must carry |
+| `--grant-max-wei` | 100000 SEI | Most one grant sends |
+| `--kube-api-url` / `--kube-token-file` / `--kube-ca-file` | in-cluster defaults | Kubernetes API that reviews callers' tokens |
 | `--log-level` | `info` | JSON logs to stdout at this level |
 
 Secrets are only read from files, such as a mounted Kubernetes secret, so they
@@ -78,13 +83,103 @@ On SIGTERM it stops taking claims, stops the sender and closes the database.
 Claims it had not settled are reconciled from the chain on the next start. `/healthz` is
 liveness; `/readyz` also checks the RPC and the faucet balance.
 
+## Grants
+
+The grants API sends any amount up to `--grant-max-wei` to an address, for
+partners, load tests and other test workloads. It listens on `--admin-addr`,
+apart from the public page, and goes through the same store, signer and nonce
+order as claims, so it never competes with them for a nonce. It skips the
+captcha, cooldowns and `--max-recipient-balance-wei`, but reads the faucet's
+balance afresh and refuses a grant that, with every unsettled claim, would take
+it below `--min-faucet-balance-wei`.
+
+Callers authenticate with a Kubernetes ServiceAccount token whose audience is
+`--admin-audience`. wellspring sends it to the Kubernetes TokenReview API and
+accepts it only for a ServiceAccount named exactly in `--admin-allow`, with no
+wildcards, so there is no shared secret: a human's `wellspring grant` runs
+`kubectl create token`, and a pod mounts a projected token.
+
+```
+POST /admin/grants
+Authorization: Bearer <token>
+{"id": "acme-2026-11", "address": "0x…", "amountWei": "5000000000000000000000", "reason": "Acme integration tests"}
+```
+
+Set `topUpToWei` instead of `amountWei` to send only what brings the address to
+that balance. While a transfer to the address is still settling its balance is
+not final, so a top-up gets 503 and `wellspring grant` retries it. `id` names
+the grant within its caller's ServiceAccount: sending the same request again returns the grant already made, with status 200, and
+reusing an ID for a different address or amount gets 409. A new grant answers
+202. `GET /admin/grants/{id}` reports it; `status` is `queued`, `sent`,
+`confirmed` or `failed`, and only a successful receipt confirms it. Each grant
+is logged with its caller, recipient, amount and reason, and counted in
+`wellspring_grants_total` and `wellspring_granted_wei_total`.
+
+### Granting from a laptop
+
+Install the CLI with Go, from Homebrew's `go` or any Go 1.21 or later, which
+fetches the toolchain `go.mod` names:
+
+```bash
+go install github.com/sei-protocol/wellspring/cmd/wellspring@v0.2.0
+```
+
+Then, with a kubeconfig context for wellspring's cluster:
+
+```bash
+wellspring grant --kube-context <context> --to 0x… --sei 5000 --reason "Acme integration tests"
+```
+
+It runs your `kubectl`, so EKS and other exec auth plugins work as they do for
+you, to mint a short-lived `grants-operator` token for the `wellspring` audience
+and to port-forward a free local port to the Service's admin port. It waits for
+the receipt, prints the transaction hash with the chain ID and public RPC, and
+stops the port-forward. `--top-up-to-sei` tops up instead, and `--amount-wei`
+and `--top-up-to-wei` take wei. Without `--id` the grant is named
+`<address>-<amount>sei-<UTC date>`, printed, so rerunning the same command that
+day resumes it rather than paying twice; pass `--id` to name it yourself or to
+resume it on a later day. `--namespace`, `--service`, `--service-account` and
+`--admin-port` default to `wellspring`, `wellspring`, `grants-operator` and
+`8081`.
+
+### Funding a test Job
+
+The image's `wellspring grant` command requests a grant and waits until it
+confirms, retrying refusals that can pass, such as an unreachable chain, and
+exiting non-zero on ones that cannot. Run it as an init container, with an `--id`
+that stays the same across the Job's retries, such as the Job's name, so a
+retried pod resumes the grant instead of paying again:
+
+```yaml
+initContainers:
+  - name: fund
+    image: ghcr.io/sei-protocol/wellspring:<version>
+    args:
+      - grant
+      - --url=http://wellspring.wellspring.svc:8081
+      - --id=my-load-test-1
+      - --address=0x…               # or --address-file
+      - --top-up-to-wei=1000000000000000000000
+      - --reason=my load test
+    volumeMounts:
+      - {name: wellspring-token, mountPath: /var/run/secrets/wellspring, readOnly: true}
+volumes:
+  - name: wellspring-token
+    projected:
+      sources:
+        - serviceAccountToken: {audience: wellspring, path: token, expirationSeconds: 600}
+```
+
+The Job's ServiceAccount must be in `--admin-allow`, and its namespace admitted
+by the chart's NetworkPolicy, which `admin.allowedServiceAccounts` does.
+
 ## Kubernetes
 
 The Helm chart in `chart/` runs it the only safe way: a single-replica
 StatefulSet, which never starts a second pod while the first is still shutting
 down, since one signer owns the nonce, a PVC at `/data`, and a
 fixed security context (UID/GID 65532, read-only root filesystem, no
-capabilities, no service account token). Merges to main publish a snapshot
+capabilities, and no service account token unless the grants API is on). Merges to main publish a snapshot
 image and chart; a `vX.Y.Z` tag publishes a release, with the chart pinned to
 its image by digest.
 
@@ -101,6 +196,9 @@ helm install wellspring oci://ghcr.io/sei-protocol/charts/wellspring --version <
 
 `config` takes any flag by name as a string, such as `config.amount-wei`. Set
 `config.trust-proxy-hops` to the number of proxies in front, or every claim
-counts against the proxy's IP. See `chart/values.yaml` for the HTTPRoute,
-ServiceMonitor, PrometheusRule and NetworkPolicy settings, and
+counts against the proxy's IP. `admin.enabled` turns on the grants API on Service port `admin.port`, binds
+the ServiceAccount to `system:auth-delegator` so wellspring can review tokens,
+and admits the namespaces of `admin.allowedServiceAccounts` to the port. See
+`chart/values.yaml` for the HTTPRoute, ServiceMonitor, PrometheusRule and
+NetworkPolicy settings, and
 [RUNBOOK.md](RUNBOOK.md) for what to do when an alert fires.

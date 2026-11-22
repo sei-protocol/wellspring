@@ -1,0 +1,17 @@
+{{- if .Values.admin.enabled }}
+# Lets wellspring create TokenReviews to authenticate grant callers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s-auth-delegator" .Release.Namespace (include "wellspring.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "wellspring.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "wellspring.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

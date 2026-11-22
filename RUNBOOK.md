@@ -71,6 +71,47 @@ or the faucet balance cannot cover a transfer.
 RPC reads are failing. Check the node behind `config.rpc-url` and the
 NetworkPolicy egress rules, if set. The sender retries on its own.
 
+## WellspringGrantFailed
+
+A grant's transfer landed with a failed receipt, or was refused for good. The
+log line `claim failed` with the grant's claim ID gives the reason. The grant
+stays failed: its caller sees `status: failed` and must request again under a
+new grant ID. Check the faucet balance and the sender before it does.
+
+## WellspringGrantAuthUnavailable
+
+wellspring could not review a grant caller's token, so it refused the grant
+with 503. Check `kubectl -n $NS logs sts/<release>-wellspring` for `token review
+failed`: the Kubernetes API is unreachable (NetworkPolicy egress, if set, must
+allow it), the projected token is missing, or the ClusterRoleBinding to
+`system:auth-delegator` is gone.
+
+## Making a grant by hand
+
+With `grants-operator` in `admin.allowedServiceAccounts`, install the CLI as in
+the README and run, with an `--id` that says what the grant is for:
+
+```bash
+wellspring grant --kube-context <context> --namespace $NS --service <release>-wellspring \
+  --id acme-2026-11 --to 0x… --sei 5000 --reason "Acme integration tests"
+```
+
+It mints the token and port-forwards with your `kubectl`, waits for the receipt
+and prints the transaction hash. Rerunning it with the same `--id` is safe: it
+returns the same grant. Without the CLI, the same through `curl`:
+
+```bash
+kubectl -n $NS port-forward svc/<release>-wellspring 8081
+TOKEN=$(kubectl -n $NS create token grants-operator --audience wellspring --duration 10m)
+curl -s localhost:8081/admin/grants -H "Authorization: Bearer $TOKEN" \
+  -d '{"id":"acme-2026-11","address":"0x…","amountWei":"5000000000000000000000","reason":"Acme integration tests"}'
+curl -s localhost:8081/admin/grants/acme-2026-11 -H "Authorization: Bearer $TOKEN"
+```
+
+Anyone allowed to create tokens for an allowed ServiceAccount, or pods under
+it, can make grants up to `admin.grantMaxWei` each. The allowlist takes only
+exact `namespace/serviceaccount` pairs, so add each caller by name.
+
 ## Rotating the signer key
 
 The sender resyncs a new key against its stored in-flight claims, so no claim

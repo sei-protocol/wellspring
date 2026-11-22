@@ -28,6 +28,12 @@ const (
 	StatusFailed    Status = "failed"
 )
 
+// Kinds of claim: a public claim through the page, or an operator grant.
+const (
+	KindClaim = "claim"
+	KindGrant = "grant"
+)
+
 // Errors CreateClaim returns for a refused claim.
 var (
 	ErrAddressCooldown = errors.New("address claimed recently")
@@ -38,6 +44,7 @@ var (
 // Claim is one request for funds.
 type Claim struct {
 	ID        string
+	Kind      string
 	Address   common.Address
 	IP        string
 	Amount    *big.Int
@@ -93,6 +100,19 @@ CREATE TABLE claim_txs (
 CREATE INDEX claim_txs_claim ON claim_txs(claim_id);
 INSERT INTO claim_txs (hash, claim_id, signed_at)
 	SELECT tx_hash, id, COALESCE(sent_at, created_at) FROM claims WHERE tx_hash != '';
+`, `
+ALTER TABLE claims ADD COLUMN kind TEXT NOT NULL DEFAULT 'claim';
+CREATE TABLE grants (
+	caller     TEXT NOT NULL,
+	id         TEXT NOT NULL,
+	address    TEXT NOT NULL,
+	request    TEXT NOT NULL,
+	amount     TEXT NOT NULL,
+	claim_id   TEXT UNIQUE REFERENCES claims(id),
+	reason     TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	PRIMARY KEY (caller, id)
+);
 `}
 
 // Open opens or creates the store at path.
@@ -155,8 +175,8 @@ func (s *Store) CreateClaim(ctx context.Context, address common.Address, ip stri
 
 	var last sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT MAX(created_at) FROM claims WHERE address = ? AND status != ? AND created_at > ?`,
-		address.Hex(), StatusFailed, now.Add(-limits.AddressCooldown).UnixMilli()).Scan(&last); err != nil {
+		`SELECT MAX(created_at) FROM claims WHERE address = ? AND kind = ? AND status != ? AND created_at > ?`,
+		address.Hex(), KindClaim, StatusFailed, now.Add(-limits.AddressCooldown).UnixMilli()).Scan(&last); err != nil {
 		return nil, 0, err
 	}
 	if last.Valid {
@@ -179,7 +199,7 @@ func (s *Store) CreateClaim(ctx context.Context, address common.Address, ip stri
 	if queued >= limits.MaxQueued {
 		return nil, time.Minute, ErrQueueFull
 	}
-	c := &Claim{ID: newID(), Address: address, IP: ip, Amount: new(big.Int).Set(amount), Status: StatusQueued, CreatedAt: time.UnixMilli(now.UnixMilli())}
+	c := &Claim{ID: newID(), Kind: KindClaim, Address: address, IP: ip, Amount: new(big.Int).Set(amount), Status: StatusQueued, CreatedAt: time.UnixMilli(now.UnixMilli())}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO claims (id, address, ip, amount, status, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		c.ID, address.Hex(), ip, amount.String(), c.Status, now.UnixMilli()); err != nil {
@@ -318,8 +338,12 @@ func update(ctx context.Context, db execer, from Status, set, id string, args ..
 }
 
 func (s *Store) query(ctx context.Context, where string, args ...any) ([]*Claim, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, address, ip, amount, status, nonce, tx_hash, raw_tx, error, created_at, sent_at, done_at FROM claims `+where, args...) //nolint:gosec // where is a constant from this file
+	return queryClaims(ctx, s.db, where, args...)
+}
+
+func queryClaims(ctx context.Context, db querier, where string, args ...any) ([]*Claim, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, kind, address, ip, amount, status, nonce, tx_hash, raw_tx, error, created_at, sent_at, done_at FROM claims `+where, args...) //nolint:gosec // where is a constant from this file
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +354,7 @@ func (s *Store) query(ctx context.Context, where string, args ...any) ([]*Claim,
 		var address, amount string
 		var created int64
 		var sent, done sql.NullInt64
-		if err := rows.Scan(&c.ID, &address, &c.IP, &amount, &c.Status, &c.Nonce, &c.TxHash, &c.RawTx, &c.Error, &created, &sent, &done); err != nil {
+		if err := rows.Scan(&c.ID, &c.Kind, &address, &c.IP, &amount, &c.Status, &c.Nonce, &c.TxHash, &c.RawTx, &c.Error, &created, &sent, &done); err != nil {
 			return nil, err
 		}
 		c.Address = common.HexToAddress(address)

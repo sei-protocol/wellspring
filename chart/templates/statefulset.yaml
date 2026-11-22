@@ -69,6 +69,10 @@ spec:
               containerPort: 8080
             - name: metrics
               containerPort: 9090
+            {{- if .Values.admin.enabled }}
+            - name: admin
+              containerPort: 8081
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "wellspring.fullname" . }}
@@ -99,6 +103,11 @@ spec:
               mountPath: /var/run/wellspring/captcha
               readOnly: true
             {{- end }}
+            {{- if .Values.admin.enabled }}
+            - name: kube-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            {{- end }}
       volumes:
         {{- with .Values.persistence.existingClaim }}
         - name: data
@@ -120,6 +129,22 @@ spec:
             items:
               - key: {{ .Values.captcha.key }}
                 path: secret
+        {{- end }}
+        {{- if .Values.admin.enabled }}
+        # Only to review grant callers' tokens; the ServiceAccount can do
+        # nothing else.
+        - name: kube-api-access
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         {{- end }}
   {{- if not .Values.persistence.existingClaim }}
   # Kept when the release is uninstalled, and immutable once created.

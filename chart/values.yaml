@@ -68,6 +68,22 @@ affinity: {}
 service:
   port: 80
 
+# The grants API: operator transfers of any amount up to grantMaxWei, without
+# the captcha, cooldowns or recipient balance cap, through the same signer and
+# nonce order as claims. It listens on its own container and Service port,
+# which the HTTPRoute never routes. Callers send a ServiceAccount token for
+# audience; wellspring has the Kubernetes API review it, so the chart binds
+# wellspring's ServiceAccount to system:auth-delegator and mounts its token.
+admin:
+  enabled: false
+  port: 8081
+  audience: wellspring
+  # Exact namespace/serviceaccount pairs; wildcards are refused. The
+  # NetworkPolicy admits the admin port from these entries' namespaces;
+  # kubectl port-forward reaches it regardless.
+  allowedServiceAccounts: []
+  grantMaxWei: "100000000000000000000000"
+
 # Routes the page and API through the Gateway API. The metrics port is never
 # routed.
 httpRoute:
