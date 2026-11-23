@@ -167,15 +167,17 @@ $("connect").onclick = async () => {
   }
 };
 
+// MetaMask Mobile nests the provider error code under data.originalError.
+const walletError = (e) => e?.data?.originalError?.code ?? e?.code;
+
 // EIP-3326 switch first; 4902 means the wallet lacks the chain, so add it (EIP-3085).
-// MetaMask Mobile nests the code under data.originalError.
 $("add").onclick = async () => {
   const chainId = "0x" + Number(info.chainId).toString(16);
   try {
     try {
       await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
     } catch (e) {
-      if (e?.code !== 4902 && e?.data?.originalError?.code !== 4902) throw e;
+      if (walletError(e) !== 4902) throw e;
       await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
         chainId,
         chainName: info.chainName,
@@ -185,7 +187,7 @@ $("add").onclick = async () => {
     }
     show(`${info.chainName} is ready in your wallet`, "ok");
   } catch (e) {
-    show(e?.code === 4001 ? "Wallet request was rejected" : `Wallet could not switch to ${info.chainName}`, "error");
+    show(walletError(e) === 4001 ? "Wallet request was rejected" : `Wallet could not switch to ${info.chainName}`, "error");
   }
 };
 
