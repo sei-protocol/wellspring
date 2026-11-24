@@ -2,6 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const STEPS = ["queued", "sent", "confirmed"];
+const CURRENCY = { name: "SEI", symbol: "SEI", decimals: 18 };
 let info, widget, token = "", polling = 0;
 const sei = (wei) => (Number(BigInt(wei) / 10n ** 14n) / 1e4).toLocaleString("en-US", { maximumFractionDigits: 4 });
 
@@ -67,10 +68,13 @@ async function load() {
   $("cooldown").textContent = `1 per ${info.addressCooldownSeconds / 3600}h`;
   $("balance").textContent = info.balanceWei ? `${Math.floor(Number(BigInt(info.balanceWei) / 10n ** 18n)).toLocaleString("en-US")} SEI` : "–";
   $("chain").textContent = info.chainId;
+  $("rpc").textContent = info.publicRpcUrl;
+  $("rpc-row").hidden = !info.publicRpcUrl;
+  $("currency").textContent = `${CURRENCY.symbol}, ${CURRENCY.decimals} decimals`;
   $("faucet").textContent = info.faucetAddress;
   $("details").hidden = false;
   $("add").textContent = `Add ${info.chainName} to wallet`;
-  $("add").hidden = !info.publicRpcUrl;
+  $("add").hidden = !info.publicRpcUrl || !window.ethereum;
   $("connect").hidden = !window.ethereum;
   const src = {
     turnstile: "https://challenges.cloudflare.com/turnstile/v0/api.js",
@@ -163,14 +167,28 @@ $("connect").onclick = async () => {
   }
 };
 
+// MetaMask Mobile nests the provider error code under data.originalError.
+const walletError = (e) => e?.data?.originalError?.code ?? e?.code;
+
+// EIP-3326 switch first; 4902 means the wallet lacks the chain, so add it (EIP-3085).
 $("add").onclick = async () => {
-  if (!window.ethereum) { show("No browser wallet found", "error"); return; }
-  await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
-    chainId: "0x" + Number(info.chainId).toString(16),
-    chainName: info.chainName,
-    nativeCurrency: { name: "SEI", symbol: "SEI", decimals: 18 },
-    rpcUrls: [info.publicRpcUrl],
-  }] });
+  const chainId = "0x" + Number(info.chainId).toString(16);
+  try {
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+    } catch (e) {
+      if (walletError(e) !== 4902) throw e;
+      await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
+        chainId,
+        chainName: info.chainName,
+        nativeCurrency: CURRENCY,
+        rpcUrls: [info.publicRpcUrl],
+      }] });
+    }
+    show(`${info.chainName} is ready in your wallet`, "ok");
+  } catch (e) {
+    show(walletError(e) === 4001 ? "Wallet request was rejected" : `Wallet could not switch to ${info.chainName}`, "error");
+  }
 };
 
 load();
